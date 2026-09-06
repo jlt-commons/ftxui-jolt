@@ -1,0 +1,42 @@
+{:paths ["src"]
+
+ ;; ftxui-jolt is a reagent-style API over FTXUI, the C++ terminal UI library.
+ ;; FTXUI's own model — a component tree whose Render() rebuilds the DOM on
+ ;; every event — is what makes this work without a reconciler: a component is
+ ;; a function returning hiccup, re-run on every frame, and the interactive
+ ;; widgets it names are kept alive across frames by position.
+ :deps {}
+
+ ;; FTXUI is C++, so the FFI binds a C shim (native/ftxui_jolt.cpp) with FTXUI
+ ;; linked into it statically; the one shared object below is all that is
+ ;; loaded at runtime. It is a build product: `jolt native` compiles it (cmake
+ ;; and a C++17 compiler needed; FTXUI itself is fetched and built unless
+ ;; FTXUI_SOURCE_DIR names a checkout or an install is found).
+ :jolt/native [{:name "ftxui-jolt"
+                :darwin ["native/libftxui_jolt.dylib"]
+                :linux  ["native/libftxui_jolt.so"]}]
+
+ :aliases {:test     {:extra-paths ["test"]     :main-opts ["-m" "ftxui.test-runner"]}
+           :counter  {:extra-paths ["examples"] :main-opts ["-m" "ftxui.examples.counter"]}
+           :todo     {:extra-paths ["examples"] :main-opts ["-m" "ftxui.examples.todo"]}
+           :showcase {:extra-paths ["examples"] :main-opts ["-m" "ftxui.examples.showcase"]}
+           :smoke    {:extra-paths ["examples"] :main-opts ["-m" "ftxui.examples.smoke"]}}
+
+ :tasks {:requires ([babashka.fs :as fs])
+         :init (do (def lib (str "native/libftxui_jolt."
+                                 (if (re-find #"^Mac" (System/getProperty "os.name")) "dylib" "so")))
+                   (def srcs ["native/ftxui_jolt.cpp" "native/ftxui_jolt.h" "native/CMakeLists.txt"]))
+
+         native {:doc "build the FTXUI shim (native/libftxui_jolt.*) if its sources changed"
+                 :task (if (or (not (fs/exists? lib)) (seq (fs/modified-since lib srcs)))
+                         (do (shell "cmake" "-S" "native" "-B" "native/build" "-DCMAKE_BUILD_TYPE=Release")
+                             (shell "cmake" "--build" "native/build" "--config" "Release" "--parallel")
+                             (println "built:" lib))
+                         (println "up to date:" lib))}
+         clean    {:doc "remove the native build directory and artifact"
+                   :task (do (fs/delete-tree "native/build") (fs/delete-if-exists lib))}
+         test     {:doc "unit tests (headless — no terminal needed)" :depends [native] :task (jolt "-M:test")}
+         counter  {:doc "the counter demo"             :depends [native] :task (jolt "-M:counter")}
+         todo     {:doc "a task board demo"            :depends [native] :task (jolt "-M:todo")}
+         showcase {:doc "every element and widget"     :depends [native] :task (jolt "-M:showcase")}
+         smoke    {:doc "run a real loop briefly and exit" :depends [native] :task (jolt "-M:smoke")}}}

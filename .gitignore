@@ -1,0 +1,14 @@
+.clj-kondo/
+.lsp/
+.cpcache/
+.dirge/
+target/
+
+# native build output; `jolt native` regenerates it
+native/build/
+native/libftxui_jolt.dylib
+native/libftxui_jolt.so
+native/ftxui_jolt.dll
+
+# jolt build cache
+.jolt/
