@@ -16,6 +16,8 @@
  *                 (fj_render_fn) and whose events are offered to jolt first
  *                 (fj_event_fn). The root of an app is one; so are the
  *                 subtrees a wrapper (modal, collapsible) holds.
+ *   canvas /    — per-frame values an element is built from: a pixel buffer
+ *   gradients     drawn stop by stop, a linear gradient built stop by stop.
  *   app / loop  — ScreenInteractive: run the blocking loop, or step it.
  *
  * Callbacks are plain C function pointers registered once via
@@ -152,6 +154,37 @@ FJ_API int32_t fj_clear_under(int32_t child);
 FJ_API int32_t fj_hyperlink(int32_t child, const char* url);
 FJ_API int32_t fj_automerge(int32_t child);
 
+/* --- gradients (per-frame arena) --------------------------------------------
+ * A linear gradient is built stop by stop and then applied to an element.
+ * Handles live in an arena cleared with the element one, so a gradient is
+ * valid for the frame that produced it. */
+FJ_API int32_t fj_gradient_new(double angle);
+/* position < 0 leaves the stop unplaced; FTXUI spreads those evenly. */
+FJ_API void fj_gradient_stop(int32_t gradient, int32_t color, double position);
+FJ_API int32_t fj_color_gradient(int32_t child, int32_t gradient);
+FJ_API int32_t fj_bgcolor_gradient(int32_t child, int32_t gradient);
+
+/* --- canvas (per-frame arena) -----------------------------------------------
+ * A pixel buffer drawn into by the calls below and turned into an element by
+ * fj_canvas_element. Coordinates are pixels, not cells: a cell holds 2x4 of
+ * them in braille mode and 2x2 in block mode, so the element is
+ * ceil(w/2) x ceil(h/4) cells.
+ *
+ * mode: 0 braille, 1 block.  value: 0 off, 1 on, 2 toggle.  color 0 = the
+ * canvas default. */
+FJ_API int32_t fj_canvas_new(int32_t width, int32_t height);
+FJ_API void fj_canvas_point(int32_t canvas, int32_t mode, int32_t x, int32_t y,
+                            int32_t value, int32_t color);
+FJ_API void fj_canvas_line(int32_t canvas, int32_t mode, int32_t x1, int32_t y1,
+                           int32_t x2, int32_t y2, int32_t color);
+FJ_API void fj_canvas_circle(int32_t canvas, int32_t mode, int32_t x, int32_t y,
+                             int32_t radius, int32_t filled, int32_t color);
+FJ_API void fj_canvas_ellipse(int32_t canvas, int32_t mode, int32_t x, int32_t y,
+                              int32_t rx, int32_t ry, int32_t filled, int32_t color);
+/* x is a multiple of 2 and y of 4: text is drawn in whole cells. */
+FJ_API void fj_canvas_text(int32_t canvas, int32_t x, int32_t y, const char* s, int32_t color);
+FJ_API int32_t fj_canvas_element(int32_t canvas);
+
 /* Headless: lay `element` out on a w x h screen and return its plain text
  * (rows joined by '\n', no escape codes). Clears the arena. The returned
  * pointer is valid until the next fj_* call that returns a string. */
@@ -181,6 +214,21 @@ FJ_API void fj_node_new(int32_t id, int32_t has_event_handler);
 FJ_API void fj_maybe_new(int32_t id, int32_t child);
 FJ_API void fj_modal_new(int32_t id, int32_t main, int32_t modal);
 FJ_API void fj_collapsible_new(int32_t id, int32_t child);
+/* A draggable separator between `main` and `back`. direction is the side main
+ * occupies (ftxui::Direction). The size in cells is the slot's value and its
+ * bounds are the slot's min / max; a drag fires FJ_ACTION_CHANGE. */
+FJ_API void fj_resizable_split_new(int32_t id, int32_t main, int32_t back, int32_t direction);
+/* Tracks whether the mouse is over `child`: the state is the slot's checked
+ * flag, and a change fires FJ_ACTION_CHANGE. */
+FJ_API void fj_hoverable_new(int32_t id, int32_t child);
+/* A floating, draggable, resizable frame around `inner`, titled by the slot's
+ * label. Several of them belong in one stacked container. A drag or a resize
+ * moves the geometry below and fires FJ_ACTION_CHANGE. */
+FJ_API void fj_window_component_new(int32_t id, int32_t inner);
+FJ_API void fj_window_set_rect(int32_t id, int32_t left, int32_t top, int32_t width, int32_t height);
+/* which: 0 left, 1 top, 2 width, 3 height */
+FJ_API int32_t fj_window_get(int32_t id, int32_t which);
+FJ_API void fj_window_set_resize(int32_t id, int32_t left, int32_t right, int32_t top, int32_t down);
 
 FJ_API int32_t fj_component_exists(int32_t id);
 FJ_API void fj_component_free(int32_t id);
@@ -252,6 +300,10 @@ FJ_API void fj_loop_run_once(void* loop);
 FJ_API void fj_loop_run_once_blocking(void* loop);
 FJ_API int32_t fj_loop_has_quitted(void* loop);
 
+/* Force the color depth instead of guessing it from TERM / COLORTERM:
+ * 0 monochrome, 1 the 16 ANSI colors, 2 the 256 palette, 3 true color. What a
+ * headless render puts in its escape sequences depends on this. */
+FJ_API void fj_set_color_support(int32_t depth);
 FJ_API int32_t fj_terminal_width(void);
 FJ_API int32_t fj_terminal_height(void);
 

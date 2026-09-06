@@ -120,14 +120,39 @@ a seq in `[:vbox ...]`).
 | `:spinner` | — | `:charset` (0–22), `:index` — one frame; advance `:index` yourself |
 | `:filler` `:empty` | — | expandable blank / nothing |
 | `:hbox` `:vbox` `:dbox` | elements | horizontal, vertical, stacked (`:dbox` draws later children over earlier) |
+| `:stack` | elements | a `:dbox` whose layers are a stacked focus container — for `:floating-window`s |
 | `:hflow` `:vflow` | elements | wrapping flows |
 | `:flexbox` | elements | `:direction :row/:column(-inversed)`, `:wrap`, `:justify`, `:align-items`, `:align-content`, `:gap [x y]` (CSS flexbox names) |
 | `:gridbox` | — | `:rows [[cell ...] ...]`, cells are hiccup |
 | `:table` | — | `:rows`, `:border` style, `:header true`, `:separators :vertical/:horizontal/:both` |
 | `:border` | one or more | `:style :light/:dashed/:heavy/:double/:rounded/:empty`, `:color` |
 | `:window` | one or more | `:title` (string or hiccup), `:style` |
+| `:canvas` | — | `:width`/`:height` in pixels, `:draw` (below), `:style :braille/:block` |
 
 A wrapper given several children lays them out as an `:hbox` first.
+
+### Canvas
+
+`:draw` is a list of drawing ops, so a picture stays a plain function of the
+state that produced it:
+
+```clojure
+[:canvas {:width 40 :height 24
+          :draw [[:line 0 0 39 23 {:color :red}]
+                 [:circle 20 12 8 {:filled true}]
+                 [:ellipse 20 12 16 6]
+                 [:point 3 4 {:value :toggle}]
+                 [:text 0 0 "hi" {:color :blue}]]}]
+```
+
+Ops are `[:point x y]`, `[:line x1 y1 x2 y2]`, `[:circle x y r]`,
+`[:ellipse x y rx ry]` and `[:text x y s]`, each taking an optional trailing
+props map: `:color`, `:style` (`:braille`, the default, or `:block`), `:value`
+(`true`, `false` or `:toggle`, for points) and `:filled` (circles, ellipses).
+
+Coordinates are **pixels**, not cells: a cell holds 2x4 braille pixels or 2x2
+block ones, so a 40x24 canvas is 20 columns by 6 rows. `:text` is drawn in
+whole cells, so its `x` is a multiple of 2 and its `y` a multiple of 4.
 
 ### Decorators
 
@@ -164,12 +189,23 @@ colors the text but not the border. Nest explicit tags for a different order:
 | `:collapsible` | `:label`, `:show`; one child subtree | `:on-change` (boolean) |
 | `:modal` | `:show`; two children: main, dialog | — |
 | `:maybe` | `:show`; one child subtree | — |
+| `:resizable-split` | `:direction :left/:right/:up/:down`, `:size` (cells), `:min`, `:max`; two children | `:on-change` (size) |
+| `:hoverable` | one child subtree | `:on-change` (boolean) |
+| `:floating-window` | `:title`, `:left`, `:top`, `:width`, `:height`, `:resize`; one child subtree | `:on-change` (`{:left :top :width :height}`) |
 | `:catch-event` | `:on-event`; the children it guards | `:on-event` (event map) |
 
 Any widget also takes `:autofocus true` to start with the focus, and `:key`.
 
+**Floating windows.** A `:floating-window` is dragged by its inside and
+resized by its edges (`:resize false`, or a map of `:left :right :top :down`,
+takes an edge out). Several of them belong in a `[:stack ...]`, which is the
+container FTXUI wants them in; they are drawn in the order they appear, the
+last on top, and that is the one a click in an overlap reaches. Raise a window
+by moving it in your own list, the way you would reorder any other children.
+
 **Controlled props.** `:value`, `:checked`, `:selected`, `:show` follow the
-reagent contract: what the prop says each frame is what the widget shows. The
+reagent contract — as do `:size` on a split and a floating window's geometry.
+What the prop says each frame is what the widget shows. The
 widget fires `:on-change` with the value the user produced; if the handler does
 not write it back, the next frame restores the prop's value. Leave the prop out
 for an uncontrolled widget that keeps its own state.
@@ -197,6 +233,17 @@ returns truthy to consume the event:
 `:gray-light`, `:gray-dark` and the `-light` variants; a 0–255 palette index;
 `[:rgb r g b]`; or `"#ff8800"` / `"#f80"`. `:default` (or nil) is the
 terminal's own.
+
+A linear gradient stands in for a color wherever one is accepted:
+
+```clojure
+[:text {:color [:gradient :red :blue]} "..."]                        ; evenly spread
+[:text {:bg {:angle 45 :stops [[:red 0.0] :yellow [:blue 1.0]]}} "..."]
+```
+
+The vector form takes colors only; the map form takes an `:angle` in degrees
+and `:stops`, each a color or a `[color position]` pair with a 0–1 position.
+Stops left unplaced are spread evenly between their neighbours.
 
 ## API (`ftxui.core`)
 
@@ -231,6 +278,12 @@ FTXUI widgets:
 (ui/render-ansi [:bold "x"] 1 1)      ; with escape codes
 ```
 
+FTXUI picks its color depth from `TERM` / `COLORTERM` the first time it
+renders, so what `render-ansi` returns depends on the terminal the test runs
+under. `(ftxui.ffi/set-color-support 3)` pins it (0 monochrome, 1 the 16 ANSI
+colors, 2 the 256 palette, 3 true color); the suite does this before its first
+assertion on an escape sequence.
+
 ## Live development
 
 Under `jolt nrepl-server`, `(ui/run app :async true)` returns right away and
@@ -257,7 +310,6 @@ an editor connected to the nREPL port.
 
 ## Not yet covered
 
-Canvas drawing, gradients, `ResizableSplit`, `Hoverable`, the draggable
-`Window` component, and animated button/menu colors (they build but need an
-animation frame source). The shim exposes what FTXUI has; adding a tag is a
-spec in `ftxui.widget` or `ftxui.dom` plus, where needed, a shim function.
+Animated button and menu colors: they build, but the animation needs a frame
+source. The shim exposes what FTXUI has; adding a tag is a spec in
+`ftxui.widget` or `ftxui.dom` plus, where needed, a shim function.

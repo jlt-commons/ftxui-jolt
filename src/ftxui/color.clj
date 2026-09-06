@@ -8,7 +8,10 @@
 
   Accepted forms: a keyword naming an ANSI color (:red, :gray-dark,
   :blue-light ...), a 0-255 int (256-palette index), [:p256 i], [:rgb r g b],
-  a hex string (\"#ff8800\" or \"#f80\"), or an already-encoded int."
+  a hex string (\"#ff8800\" or \"#f80\"), or an already-encoded int.
+
+  A linear gradient stands in for a color wherever one is accepted; it needs
+  more than one int, so it stays a spec here and ftxui.dom builds it."
   (:require [clojure.string :as str]))
 
 (def palette16
@@ -62,3 +65,30 @@
                       :p256 (bit-or P256 (bit-and (second c) 0xff))
                       (throw (ex-info (str "color: unknown form " (pr-str c)) {:color c})))
     :else (throw (ex-info (str "color: unsupported " (pr-str c)) {:color c}))))
+
+;; --- linear gradients -----------------------------------------------------------
+(defn gradient?
+  "Is `c` a gradient rather than a plain color? Either [:gradient c1 c2 ...]
+  or {:angle degrees :stops [...]}."
+  [c]
+  (or (and (map? c) (contains? c :stops))
+      (and (vector? c) (= :gradient (first c)))))
+
+(defn- stop
+  "A stop is a color, or a [color position] pair with a 0-1 position. Only the
+  color forms that are themselves vectors need telling apart."
+  [s]
+  (if (and (vector? s) (not (#{:rgb :p256} (first s))))
+    [(code (first s)) (some-> (second s) double)]
+    [(code s) nil]))
+
+(defn gradient
+  "Normalize a gradient spec to {:angle degrees :stops [[code position] ...]}.
+  A nil position leaves the stop for FTXUI to place, which spreads the
+  unplaced ones evenly between their neighbours."
+  [c]
+  (when-not (gradient? c)
+    (throw (ex-info (str "color: not a gradient " (pr-str c)) {:color c})))
+  (let [{:keys [angle stops]} (if (map? c) c {:stops (rest c)})]
+    {:angle (double (or angle 0))
+     :stops (mapv stop stops)}))

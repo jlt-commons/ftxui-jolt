@@ -5,6 +5,8 @@
     background thread (state in an ftxui.core/atom, so each tick redraws)
   - widgets: input, checkbox, radiobox, toggle, dropdown, slider, collapsible
   - layout: flexbox, gridbox, table
+  - drawing: a canvas animated by the same ticker, and linear gradients
+  - panes: a resizable split, a hoverable, and draggable floating windows
   - a modal dialog opened from a button and closed from inside it
 
   Run with `jolt showcase`. Escape exits (a root :on-event handler)."
@@ -17,6 +19,11 @@
 
 (def form (atom {:name "" :agree false :size 1 :mode 0 :country 0 :volume 40 :details? false}))
 (def dialog? (atom false))
+
+(def split-size (atom 18))
+(def hot (atom false))
+(def windows (atom {:one {:left 1 :top 1 :width 26 :height 6}
+                    :two {:left 10 :top 4 :width 28 :height 7}}))
 
 (defn- set-field! [k] (fn [v] (swap! form assoc k v)))
 
@@ -89,12 +96,60 @@
                    ["jolt" "Clojure" "∞"]
                    ["ftxui-jolt" "both" "you tell me"]]}]])
 
+(defn drawing-page []
+  (let [phase (* 0.15 @tick)
+        wave  (for [x (range 44 100)]
+                [:point x (int (+ 20 (* 14 (Math/sin (+ phase (/ x 7.0)))))) {:color :green}])]
+    [:vbox
+     [:text {:bold true :underlined true} "canvas — coordinates are pixels, 2x4 to a cell"]
+     [:canvas {:width 100 :height 40
+               :draw (into [[:circle 20 20 14 {:color :cyan}]
+                            [:circle 20 20 6 {:filled true :color :magenta}]
+                            [:line 40 0 40 39 {:color :gray-dark}]
+                            [:text 44 0 "sin" {:color :yellow}]]
+                           wave)}]
+     [:separator]
+     [:text {:bold true :underlined true} "gradients"]
+     [:text {:color [:gradient :red :yellow :green :cyan :blue]} (apply str (repeat 46 "━"))]
+     [:text {:bg {:angle 90 :stops [["#402060" 0.0] ["#20c0a0" 1.0]]} :color :white}
+      " a background gradient, turned a quarter turn "]]))
+
+(defn panes-page []
+  [:vbox
+   [:text {:bold true :underlined true} "resizable split — drag the separator"]
+   [:vbox {:height 7}
+    [:resizable-split {:direction :left :size @split-size :min 6 :max 50
+                       :on-change #(reset! split-size %)}
+     [:vbox {:border true} [:text "main"] [:text @split-size " cells wide"]]
+     [:vbox {:border true} [:text "back"] [:text {:dim true} "takes the rest"]]]]
+   [:separator]
+   [:text {:bold true :underlined true} "hoverable — move the mouse over the box"]
+   [:hoverable {:on-change #(reset! hot %)}
+    [:text {:border true :bg (if @hot :blue :default) :color (if @hot :white :default)}
+     (if @hot " the mouse is here " " hover me ")]]])
+
+(defn- floating [k title]
+  [:floating-window (assoc (@windows k) :title title :on-change #(swap! windows assoc k %))
+   [:vbox [:text {:dim true} "drag me by the inside,"]
+          [:text {:dim true} "resize me from an edge"]
+          [:filler]
+          [:text (pr-str (@windows k))]]])
+
+(defn windows-page []
+  [:vbox
+   [:text {:bold true :underlined true} "floating windows — the one drawn on top takes the click"]
+   [:stack {:flex true}
+    [floating :one "one"]
+    [floating :two "two"]]])
+
 (defn modal-page []
   [:vbox
    [:text "A modal renders over the page and takes the focus while shown."]
    [:button {:label "Open dialog" :on-click #(reset! dialog? true)}]])
 
-(def pages [["Elements" elements-page] ["Widgets" widgets-page] ["Layout" layout-page] ["Modal" modal-page]])
+(def pages [["Elements" elements-page] ["Widgets" widgets-page] ["Layout" layout-page]
+            ["Drawing" drawing-page] ["Panes" panes-page] ["Windows" windows-page]
+            ["Modal" modal-page]])
 
 ;; --- app ----------------------------------------------------------------------------
 (defn dialog []
@@ -108,7 +163,8 @@
 (defn app []
   [:modal {:show @dialog?}
    [:vbox {:border :rounded}
-    [:text {:bold true} " ftxui-jolt showcase " [:dim "(Escape quits)"]]
+    ;; a :text concatenates its children as strings, so the dim part is a sibling
+    [:hbox [:text {:bold true} " ftxui-jolt showcase "] [:dim "(Escape quits)"]]
     [:separator]
     [:hbox
      [:vbox {:width 14}

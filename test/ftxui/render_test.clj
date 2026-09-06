@@ -245,6 +245,110 @@
     (swap! a inc)
     (is (= 2 @a))))
 
+
+(deftest resizable-split-drags-its-separator
+  (let [size (atom 4)
+        seen (atom [])
+        app  (fn [] [:resizable-split {:direction :left :size @size
+                                       :on-change #(do (swap! seen conj %) (reset! size %))}
+                     [:text "L"] [:text "R"]])]
+    (with-screen [s app]
+      (is (= "L   │R" (str/trimr (ui/render-text s 10 1))) "main takes :size columns, then the separator")
+      (testing "pressing the separator and moving resizes the main pane"
+        (ui/send-mouse! s {:x 4 :y 0 :motion :pressed})
+        (ui/send-mouse! s {:x 6 :y 0 :motion :moved})
+        (is (= [6] @seen))
+        (is (= "L     │R" (str/trimr (ui/render-text s 10 1)))))
+      (testing "the size is controlled: what the prop says is what is drawn"
+        (reset! size 2)
+        (is (= "L │R" (str/trimr (ui/render-text s 10 1))))))))
+
+(deftest resizable-split-obeys-min-and-max
+  (let [size (atom 4)
+        app  (fn [] [:resizable-split {:size @size :min 2 :max 5 :on-change #(reset! size %)}
+                     [:text "L"] [:text "R"]])]
+    (with-screen [s app]
+      (ui/render-text s 10 1)
+      (ui/send-mouse! s {:x 4 :y 0 :motion :pressed})
+      (ui/send-mouse! s {:x 9 :y 0 :motion :moved})
+      (is (= 5 @size))
+      (ui/send-mouse! s {:x 0 :y 0 :motion :moved})
+      (is (= 2 @size)))))
+
+(deftest split-direction-picks-the-side-main-takes
+  (is (= ["L │R"] (lines (ui/render-text [:resizable-split {:direction :left :size 2}
+                                          [:text "L"] [:text "R"]] 4 1))))
+  (is (= ["B│M"] (lines (ui/render-text [:resizable-split {:direction :right :size 2}
+                                         [:text "M"] [:text "B"]] 4 1)))
+      "the back pane flexes, so main keeps its two columns on the right")
+  (is (= ["T" "───" "B"] (lines (ui/render-text [:resizable-split {:direction :up :size 1}
+                                                 [:text "T"] [:text "B"]] 3 3))))
+  (is (= ["B" "───" "T"] (lines (ui/render-text [:resizable-split {:direction :bottom :size 1}
+                                                 [:text "T"] [:text "B"]] 3 3))))
+  (testing "without a :size prop the split keeps FTXUI's own default"
+    (is (= "L                   │R" (str/trimr (ui/render-text [:resizable-split {} [:text "L"] [:text "R"]] 24 1))))))
+
+(deftest hoverable-reports-the-mouse
+  (let [seen (atom [])
+        app  (fn [] [:hoverable {:on-change #(swap! seen conj %)} [:text "abcd"]])]
+    (with-screen [s app]
+      (ui/render-text s 6 1)                       ; a box is only known once drawn
+      (ui/send-mouse! s {:x 1 :y 0 :motion :moved})
+      (is (= [true] @seen))
+      (ui/send-mouse! s {:x 5 :y 3 :motion :moved})
+      (is (= [true false] @seen) "and once more when it leaves")
+      (ui/send-mouse! s {:x 4 :y 3 :motion :moved})
+      (is (= [true false] @seen) "staying outside says nothing"))))
+
+(deftest floating-window-drags
+  (let [geom (atom {:left 0 :top 0 :width 10 :height 4})
+        app  (fn [] [:floating-window (assoc @geom :title "w" :on-change #(reset! geom %))
+                     [:text "in"]])]
+    (with-screen [s app]
+      (is (= ["╭w───────╮" "│in      │" "│        │" "╰────────╯"] (lines (ui/render-text s 12 4))))
+      (testing "pressing inside and moving drags the whole window"
+        (ui/send-mouse! s {:x 3 :y 1 :motion :pressed})
+        (ui/send-mouse! s {:x 5 :y 2 :motion :moved})
+        (is (= {:left 2 :top 1 :width 10 :height 4} @geom))
+        (is (= ["" "  ╭w───────╮" "  │in      │" "  │        │" "  ╰────────╯" ""]
+               (lines (ui/render-text s 14 6))))))))
+
+(deftest floating-window-resizes-from-its-border
+  (let [geom (atom {:left 0 :top 0 :width 10 :height 4})
+        app  (fn [] [:floating-window (assoc @geom :title "w" :on-change #(reset! geom %))
+                     [:text "in"]])]
+    (with-screen [s app]
+      (ui/render-text s 20 6)
+      (testing "the right edge resizes rather than drags"
+        (ui/send-mouse! s {:x 9 :y 2 :motion :pressed})
+        (ui/send-mouse! s {:x 12 :y 2 :motion :moved})
+        (is (= {:left 0 :top 0 :width 13 :height 4} @geom)))))
+  (testing ":resize false leaves the edges alone, so the same press drags"
+    (let [geom (atom {:left 0 :top 0 :width 10 :height 4})
+          app  (fn [] [:floating-window (assoc @geom :title "w" :resize false
+                                               :on-change #(reset! geom %))
+                       [:text "in"]])]
+      (with-screen [s app]
+        (ui/render-text s 20 6)
+        (ui/send-mouse! s {:x 9 :y 2 :motion :pressed})
+        (ui/send-mouse! s {:x 12 :y 2 :motion :moved})
+        (is (= {:left 3 :top 0 :width 10 :height 4} @geom))))))
+
+(deftest stacked-windows-take-the-mouse-in-drawing-order
+  (let [ws  (atom {:a {:left 0 :top 0 :width 6 :height 3}
+                   :b {:left 3 :top 1 :width 6 :height 3}})
+        app (fn [] [:stack
+                    [:floating-window (assoc (:a @ws) :title "a" :on-change #(swap! ws assoc :a %)) [:text "1"]]
+                    [:floating-window (assoc (:b @ws) :title "b" :on-change #(swap! ws assoc :b %)) [:text "2"]]])]
+    (with-screen [s app]
+      (is (= ["╭a───╮" "│1 ╭b───╮" "╰──┤2   │" "   ╰────╯"] (lines (ui/render-text s 12 4))))
+      (is (= 1 (:containers (ui/stats s))) "one stacked container holds them")
+      (testing "a press where they overlap reaches the one drawn on top"
+        (ui/send-mouse! s {:x 4 :y 2 :motion :pressed})
+        (ui/send-mouse! s {:x 5 :y 3 :motion :moved})
+        (is (= {:a {:left 0 :top 0 :width 6 :height 3}
+                :b {:left 4 :top 2 :width 6 :height 3}} @ws))))))
+
 (deftest universal-props-decorate-components
   (let [app (fn [] [:button {:label "b" :style :ascii :border true}])]
     (with-screen [s app]

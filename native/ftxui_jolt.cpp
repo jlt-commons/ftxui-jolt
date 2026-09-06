@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -22,8 +24,10 @@
 #include <ftxui/component/event.hpp>
 #include <ftxui/component/loop.hpp>
 #include <ftxui/component/mouse.hpp>
+#include <ftxui/dom/canvas.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/dom/flexbox_config.hpp>
+#include <ftxui/dom/linear_gradient.hpp>
 #include <ftxui/dom/node.hpp>
 #include <ftxui/dom/table.hpp>
 #include <ftxui/screen/color.hpp>
@@ -70,8 +74,26 @@ Elements gather(const int32_t* children, int32_t n) {
   return out;
 }
 
+// Canvases and gradients are per-frame values feeding elements, so they share
+// the element arena's lifetime: built during a render, dropped with it.
+std::vector<Canvas> g_canvases;
+std::vector<LinearGradient> g_gradients;
+
+Canvas* canvas_at(int32_t h) {
+  if (h <= 0 || h > static_cast<int32_t>(g_canvases.size())) return nullptr;
+  return &g_canvases[static_cast<size_t>(h - 1)];
+}
+
+LinearGradient* gradient_at(int32_t h) {
+  if (h <= 0 || h > static_cast<int32_t>(g_gradients.size())) return nullptr;
+  return &g_gradients[static_cast<size_t>(h - 1)];
+}
+
 void clear_arena_if_outermost() {
-  if (g_depth == 0) g_arena.clear();
+  if (g_depth != 0) return;
+  g_arena.clear();
+  g_canvases.clear();
+  g_gradients.clear();
 }
 
 // --- colors ------------------------------------------------------------------
@@ -211,9 +233,13 @@ bool offer_event(int32_t id, const Event& e) {
 // The widget's state lives here, and the option structs point into it
 // (Ref<T>(T*)), so a setter is a plain assignment the widget sees on its next
 // render and a getter reads what the widget last wrote.
+class ChangeWatcher;
+
 struct Slot {
   int32_t id = 0;
   Component comp;
+  // The watcher wrapped around comp, when the component has one.
+  ChangeWatcher* watcher = nullptr;
   std::string label;
   std::string content;
   std::string placeholder;
@@ -231,6 +257,15 @@ struct Slot {
   int max = 100;
   int increment = 1;
   int selector = 0;
+  // The floating window's geometry, in cells.
+  int left = 0;
+  int top = 0;
+  int width = 20;
+  int height = 10;
+  bool resize_left = true;
+  bool resize_right = true;
+  bool resize_top = true;
+  bool resize_down = true;
 };
 
 std::unordered_map<int32_t, std::unique_ptr<Slot>> g_slots;
@@ -276,6 +311,58 @@ class JoltNode : public ComponentBase {
   int32_t id_;
   bool has_handler_;
 };
+
+// ResizableSplit and Window write their new size or position straight into the
+// refs they were given and offer no callback of their own, so this wraps them
+// and fires FJ_ACTION_CHANGE once an event left the watched state elsewhere.
+// State pushed from jolt is not a user change: the setters call resync.
+class ChangeWatcher : public ComponentBase {
+ public:
+  ChangeWatcher(int32_t id, Component child, std::function<int64_t()> state)
+      : id_(id), state_(std::move(state)) {
+    Add(std::move(child));
+    last_ = state_();
+  }
+
+  void Resync() { last_ = state_(); }
+
+  bool OnEvent(Event event) override {
+    const bool handled = ComponentBase::OnEvent(std::move(event));
+    const int64_t now = state_();
+    if (now != last_) {
+      last_ = now;
+      fire(id_, FJ_ACTION_CHANGE);
+    }
+    return handled;
+  }
+
+ private:
+  int32_t id_;
+  std::function<int64_t()> state_;
+  int64_t last_ = 0;
+};
+
+// Install `child` under a watcher of `state` as the slot's component.
+void watch(Slot* s, Component child, std::function<int64_t()> state) {
+  auto w = Make<ChangeWatcher>(s->id, std::move(child), std::move(state));
+  s->watcher = w.get();
+  s->comp = std::move(w);
+}
+
+// State the jolt side pushed is the new baseline, not a change to report.
+void resync(int32_t id) {
+  Slot* s = slot(id);
+  if (s && s->watcher) s->watcher->Resync();
+}
+
+// The four geometry fields of a floating window, as one comparable value.
+int64_t window_state(const Slot* s) {
+  int64_t v = s->left;
+  v = v * 1000003 + s->top;
+  v = v * 1000003 + s->width;
+  v = v * 1000003 + s->height;
+  return v;
+}
 
 bool same_children(const Component& parent, const int32_t* children, int32_t n) {
   if (static_cast<int32_t>(parent->ChildCount()) != n) return false;
@@ -516,6 +603,135 @@ int32_t fj_hyperlink(int32_t child, const char* url) {
 
 int32_t fj_automerge(int32_t child) { return push(automerge(get(child))); }
 
+// --- gradients --------------------------------------------------------------
+int32_t fj_gradient_new(double angle) {
+  LinearGradient g;
+  g.angle = static_cast<float>(angle);
+  g_gradients.push_back(std::move(g));
+  return static_cast<int32_t>(g_gradients.size());
+}
+
+void fj_gradient_stop(int32_t gradient, int32_t color, double position) {
+  LinearGradient* g = gradient_at(gradient);
+  if (!g) return;
+  if (position < 0) {
+    g->Stop(decode_color(color));
+  } else {
+    g->Stop(decode_color(color), static_cast<float>(position));
+  }
+}
+
+int32_t fj_color_gradient(int32_t child, int32_t gradient) {
+  LinearGradient* g = gradient_at(gradient);
+  if (!g) return push(get(child));
+  return push(color(*g, get(child)));
+}
+
+int32_t fj_bgcolor_gradient(int32_t child, int32_t gradient) {
+  LinearGradient* g = gradient_at(gradient);
+  if (!g) return push(get(child));
+  return push(bgcolor(*g, get(child)));
+}
+
+// --- canvas -----------------------------------------------------------------
+int32_t fj_canvas_new(int32_t width, int32_t height) {
+  g_canvases.emplace_back(std::max(width, 0), std::max(height, 0));
+  return static_cast<int32_t>(g_canvases.size());
+}
+
+void fj_canvas_point(int32_t canvas, int32_t mode, int32_t x, int32_t y,
+                     int32_t value, int32_t color) {
+  Canvas* c = canvas_at(canvas);
+  if (!c) return;
+  const bool block = mode == 1;
+  if (value == 2) {
+    block ? c->DrawBlockToggle(x, y) : c->DrawPointToggle(x, y);
+    return;
+  }
+  const bool on = value != 0;
+  if (color > 0) {
+    block ? c->DrawBlock(x, y, on, decode_color(color))
+          : c->DrawPoint(x, y, on, decode_color(color));
+  } else {
+    block ? c->DrawBlock(x, y, on) : c->DrawPoint(x, y, on);
+  }
+}
+
+void fj_canvas_line(int32_t canvas, int32_t mode, int32_t x1, int32_t y1,
+                    int32_t x2, int32_t y2, int32_t color) {
+  Canvas* c = canvas_at(canvas);
+  if (!c) return;
+  const bool block = mode == 1;
+  if (color > 0) {
+    block ? c->DrawBlockLine(x1, y1, x2, y2, decode_color(color))
+          : c->DrawPointLine(x1, y1, x2, y2, decode_color(color));
+  } else {
+    block ? c->DrawBlockLine(x1, y1, x2, y2) : c->DrawPointLine(x1, y1, x2, y2);
+  }
+}
+
+void fj_canvas_circle(int32_t canvas, int32_t mode, int32_t x, int32_t y,
+                      int32_t radius, int32_t filled, int32_t color) {
+  Canvas* c = canvas_at(canvas);
+  if (!c) return;
+  const bool block = mode == 1;
+  if (color > 0) {
+    const Color col = decode_color(color);
+    if (filled) {
+      block ? c->DrawBlockCircleFilled(x, y, radius, col)
+            : c->DrawPointCircleFilled(x, y, radius, col);
+    } else {
+      block ? c->DrawBlockCircle(x, y, radius, col)
+            : c->DrawPointCircle(x, y, radius, col);
+    }
+    return;
+  }
+  if (filled) {
+    block ? c->DrawBlockCircleFilled(x, y, radius) : c->DrawPointCircleFilled(x, y, radius);
+  } else {
+    block ? c->DrawBlockCircle(x, y, radius) : c->DrawPointCircle(x, y, radius);
+  }
+}
+
+void fj_canvas_ellipse(int32_t canvas, int32_t mode, int32_t x, int32_t y,
+                       int32_t rx, int32_t ry, int32_t filled, int32_t color) {
+  Canvas* c = canvas_at(canvas);
+  if (!c) return;
+  const bool block = mode == 1;
+  if (color > 0) {
+    const Color col = decode_color(color);
+    if (filled) {
+      block ? c->DrawBlockEllipseFilled(x, y, rx, ry, col)
+            : c->DrawPointEllipseFilled(x, y, rx, ry, col);
+    } else {
+      block ? c->DrawBlockEllipse(x, y, rx, ry, col) : c->DrawPointEllipse(x, y, rx, ry, col);
+    }
+    return;
+  }
+  if (filled) {
+    block ? c->DrawBlockEllipseFilled(x, y, rx, ry) : c->DrawPointEllipseFilled(x, y, rx, ry);
+  } else {
+    block ? c->DrawBlockEllipse(x, y, rx, ry) : c->DrawPointEllipse(x, y, rx, ry);
+  }
+}
+
+void fj_canvas_text(int32_t canvas, int32_t x, int32_t y, const char* s, int32_t color) {
+  Canvas* c = canvas_at(canvas);
+  if (!c) return;
+  const std::string str(s ? s : "");
+  if (color > 0) {
+    c->DrawText(x, y, str, decode_color(color));
+  } else {
+    c->DrawText(x, y, str);
+  }
+}
+
+int32_t fj_canvas_element(int32_t canvas) {
+  Canvas* c = canvas_at(canvas);
+  if (!c) return push(emptyElement());
+  return push(::ftxui::canvas(*c));
+}
+
 const char* fj_render_text(int32_t element, int32_t w, int32_t h) {
   const char* out = render_screen(get(element), w, h, false);
   clear_arena_if_outermost();
@@ -671,6 +887,79 @@ void fj_collapsible_new(int32_t id, int32_t child) {
   s->comp = Container::Vertical({Checkbox(opt), Maybe(c, &s->show)});
 }
 
+void fj_resizable_split_new(int32_t id, int32_t main, int32_t back, int32_t dir) {
+  Component m = comp(main);
+  Component b = comp(back);
+  if (!m || !b) return;
+  Slot* s = new_slot(id);
+  const bool horizontal = dir == 2 || dir == 3;
+  s->value = horizontal ? 20 : 10;  // FTXUI's own defaults
+  s->max = std::numeric_limits<int>::max();
+  ResizableSplitOption opt;
+  opt.main = m;
+  opt.back = b;
+  opt.direction = direction(dir);
+  opt.main_size = &s->value;
+  opt.min = &s->min;
+  opt.max = &s->max;
+  watch(s, ResizableSplit(opt), [s] { return static_cast<int64_t>(s->value); });
+}
+
+void fj_hoverable_new(int32_t id, int32_t child) {
+  Component c = comp(child);
+  if (!c) return;
+  Slot* s = new_slot(id);
+  watch(s, Hoverable(c, &s->checked), [s] { return static_cast<int64_t>(s->checked); });
+}
+
+void fj_window_component_new(int32_t id, int32_t inner) {
+  Component c = comp(inner);
+  if (!c) return;
+  Slot* s = new_slot(id);
+  WindowOptions opt;
+  opt.inner = c;
+  opt.title = &s->label;
+  opt.left = &s->left;
+  opt.top = &s->top;
+  opt.width = &s->width;
+  opt.height = &s->height;
+  opt.resize_left = &s->resize_left;
+  opt.resize_right = &s->resize_right;
+  opt.resize_top = &s->resize_top;
+  opt.resize_down = &s->resize_down;
+  watch(s, Window(opt), [s] { return window_state(s); });
+}
+
+void fj_window_set_rect(int32_t id, int32_t left, int32_t top, int32_t width, int32_t height) {
+  Slot* s = slot(id);
+  if (!s) return;
+  s->left = left;
+  s->top = top;
+  s->width = width;
+  s->height = height;
+  resync(id);
+}
+
+int32_t fj_window_get(int32_t id, int32_t which) {
+  Slot* s = slot(id);
+  if (!s) return 0;
+  switch (which) {
+    case 1: return s->top;
+    case 2: return s->width;
+    case 3: return s->height;
+    default: return s->left;
+  }
+}
+
+void fj_window_set_resize(int32_t id, int32_t left, int32_t right, int32_t top, int32_t down) {
+  Slot* s = slot(id);
+  if (!s) return;
+  s->resize_left = left != 0;
+  s->resize_right = right != 0;
+  s->resize_top = top != 0;
+  s->resize_down = down != 0;
+}
+
 int32_t fj_component_exists(int32_t id) { return slot(id) ? 1 : 0; }
 
 void fj_component_free(int32_t id) {
@@ -755,11 +1044,15 @@ void fj_set_selected(int32_t id, int32_t i) {
   if (Slot* s = slot(id)) { s->selected = i; s->focused_entry = i; }
 }
 int32_t fj_get_selected(int32_t id) { Slot* s = slot(id); return s ? s->selected : 0; }
-void fj_set_checked(int32_t id, int32_t b) { if (Slot* s = slot(id)) s->checked = b != 0; }
+void fj_set_checked(int32_t id, int32_t b) {
+  if (Slot* s = slot(id)) { s->checked = b != 0; resync(id); }
+}
 int32_t fj_get_checked(int32_t id) { Slot* s = slot(id); return s && s->checked ? 1 : 0; }
 void fj_set_show(int32_t id, int32_t b) { if (Slot* s = slot(id)) s->show = b != 0; }
 int32_t fj_get_show(int32_t id) { Slot* s = slot(id); return s && s->show ? 1 : 0; }
-void fj_set_value(int32_t id, int32_t v) { if (Slot* s = slot(id)) s->value = v; }
+void fj_set_value(int32_t id, int32_t v) {
+  if (Slot* s = slot(id)) { s->value = v; resync(id); }
+}
 int32_t fj_get_value(int32_t id) { Slot* s = slot(id); return s ? s->value : 0; }
 void fj_set_range(int32_t id, int32_t min, int32_t max, int32_t increment) {
   if (Slot* s = slot(id)) { s->min = min; s->max = max; s->increment = increment; }
@@ -855,6 +1148,15 @@ void fj_loop_free(void* loop) { delete static_cast<Loop*>(loop); }
 void fj_loop_run_once(void* loop) { if (loop) static_cast<Loop*>(loop)->RunOnce(); }
 void fj_loop_run_once_blocking(void* loop) { if (loop) static_cast<Loop*>(loop)->RunOnceBlocking(); }
 int32_t fj_loop_has_quitted(void* loop) { return loop && static_cast<Loop*>(loop)->HasQuitted() ? 1 : 0; }
+
+void fj_set_color_support(int32_t depth) {
+  switch (depth) {
+    case 0: Terminal::SetColorSupport(Terminal::Color::Palette1); break;
+    case 1: Terminal::SetColorSupport(Terminal::Color::Palette16); break;
+    case 2: Terminal::SetColorSupport(Terminal::Color::Palette256); break;
+    default: Terminal::SetColorSupport(Terminal::Color::TrueColor); break;
+  }
+}
 
 int32_t fj_terminal_width(void) { return Terminal::Size().dimx; }
 int32_t fj_terminal_height(void) { return Terminal::Size().dimy; }

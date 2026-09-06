@@ -102,6 +102,24 @@
 (ffi/defcfn hyperlink "fj_hyperlink" [:int :string] :int)
 (ffi/defcfn automerge "fj_automerge" [:int] :int)
 
+;; --- gradients ----------------------------------------------------------------
+;; A gradient is built stop by stop into the same per-frame arena as elements.
+(ffi/defcfn gradient-new "fj_gradient_new" [:double] :int)
+(ffi/defcfn gradient-stop "fj_gradient_stop" [:int :int :double] :void)
+(ffi/defcfn color-gradient "fj_color_gradient" [:int :int] :int)
+(ffi/defcfn bgcolor-gradient "fj_bgcolor_gradient" [:int :int] :int)
+
+;; --- canvas -------------------------------------------------------------------
+;; Coordinates are pixels: a cell holds 2x4 of them in braille mode (0) and
+;; 2x2 in block mode (1).
+(ffi/defcfn canvas-new "fj_canvas_new" [:int :int] :int)
+(ffi/defcfn canvas-point "fj_canvas_point" [:int :int :int :int :int :int] :void)
+(ffi/defcfn canvas-line "fj_canvas_line" [:int :int :int :int :int :int :int] :void)
+(ffi/defcfn canvas-circle "fj_canvas_circle" [:int :int :int :int :int :int :int] :void)
+(ffi/defcfn canvas-ellipse "fj_canvas_ellipse" [:int :int :int :int :int :int :int :int] :void)
+(ffi/defcfn canvas-text "fj_canvas_text" [:int :int :int :string :int] :void)
+(ffi/defcfn canvas-element "fj_canvas_element" [:int] :int)
+
 (ffi/defcfn render-text "fj_render_text" [:int :int :int] :string)
 (ffi/defcfn render-ansi "fj_render_ansi" [:int :int :int] :string)
 (ffi/defcfn arena-size "fj_arena_size" [] :int)
@@ -119,6 +137,12 @@
 (ffi/defcfn maybe-new "fj_maybe_new" [:int :int] :void)
 (ffi/defcfn modal-new "fj_modal_new" [:int :int :int] :void)
 (ffi/defcfn collapsible-new "fj_collapsible_new" [:int :int] :void)
+(ffi/defcfn resizable-split-new "fj_resizable_split_new" [:int :int :int :int] :void)
+(ffi/defcfn hoverable-new "fj_hoverable_new" [:int :int] :void)
+(ffi/defcfn window-component-new "fj_window_component_new" [:int :int] :void)
+(ffi/defcfn window-set-rect "fj_window_set_rect" [:int :int :int :int :int] :void)
+(ffi/defcfn window-get "fj_window_get" [:int :int] :int)
+(ffi/defcfn window-set-resize "fj_window_set_resize" [:int :int :int :int :int] :void)
 
 (ffi/defcfn component-exists "fj_component_exists" [:int] :int)
 (ffi/defcfn component-free "fj_component_free" [:int] :void)
@@ -187,6 +211,11 @@
 (ffi/defcfn loop-run-once "fj_loop_run_once" [:pointer] :void :blocking)
 (ffi/defcfn loop-run-once-blocking "fj_loop_run_once_blocking" [:pointer] :void :blocking)
 (ffi/defcfn loop-has-quitted "fj_loop_has_quitted" [:pointer] :int)
+
+;; 0 monochrome, 1 the 16 ANSI colors, 2 the 256 palette, 3 true color. FTXUI
+;; guesses from TERM / COLORTERM otherwise, which makes a headless render's
+;; escape sequences depend on the terminal the tests happen to run under.
+(ffi/defcfn set-color-support "fj_set_color_support" [:int] :void)
 
 (ffi/defcfn terminal-width "fj_terminal_width" [] :int)
 (ffi/defcfn terminal-height "fj_terminal_height" [] :int)

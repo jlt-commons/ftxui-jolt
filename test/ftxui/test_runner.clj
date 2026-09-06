@@ -2,7 +2,8 @@
   "Entry point for `jolt -M:test` (and the :test task). Requires each test
   namespace and runs clojure.test over them; exits non-zero on any failure so
   CI fails. Everything here is headless — no terminal is needed."
-  (:require [clojure.test :as t]))
+  (:require [clojure.test :as t]
+            [ftxui.ffi :as ffi]))
 
 ;; Surface full causes on :error — the default report swallows the throwable.
 (defmethod t/report :error [m]
@@ -32,6 +33,10 @@
     ftxui.render-test])
 
 (defn -main [& _]
+  ;; FTXUI picks its color depth from TERM / COLORTERM on the first render,
+  ;; so pin true color: what an assertion on escape sequences sees should not
+  ;; depend on the terminal the suite happens to run under.
+  (ffi/set-color-support 3)
   (let [loaded (doall
                  (for [ns namespaces
                        :let [ok (try (require ns :reload) true

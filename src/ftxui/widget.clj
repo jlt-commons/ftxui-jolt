@@ -26,6 +26,10 @@
 
 (def button-styles {:simple 0 :ascii 1 :border 2 :animated 3})
 (def menu-styles {:plain 0 :animated 1 :toggle 2})
+;; A split's direction is the side its main pane takes.
+(def split-directions (assoc dom/directions :top 0 :bottom 1))
+;; The shim's own default: a split may grow to the whole screen.
+(def ^:private max-split-size 2147483647)
 
 (defn- lookup [table x what]
   (or (get table x)
@@ -60,6 +64,29 @@
       (when (not= b (= 1 (f/get-show id))) (f/set-show id (if b 1 0))))))
 
 (defn- ->bool [x] (if x 1 0))
+
+;; --- the floating window's geometry ---------------------------------------------
+;; Four ints in the slot, read back after a drag or a resize and pushed from
+;; the props the same way as any other controlled value.
+(def ^:private rect-keys [:left :top :width :height])
+
+(defn- window-rect
+  "The window's current geometry, as a map."
+  [id]
+  (zipmap rect-keys (map #(f/window-get id %) (range 4))))
+
+(defn- push-rect! [id props]
+  (let [now (window-rect id)
+        want (merge now (select-keys props rect-keys))]
+    (when (not= now want)
+      (let [{:keys [left top width height]} want]
+        (f/window-set-rect id (int left) (int top) (int width) (int height))))))
+
+(defn- push-resize!
+  "Which sides a drag may resize: true / false, or a map of the four sides."
+  [id r]
+  (let [side (fn [k] (->bool (if (map? r) (get r k true) (if (nil? r) true r))))]
+    (f/window-set-resize id (side :left) (side :right) (side :top) (side :down))))
 
 (def specs
   {:button
@@ -158,6 +185,42 @@
     :apply (fn [id props prev] (push-label! id props prev) (push-show! id props))
     :events {:on-change {:kind 1 :arg #(= 1 (f/get-show %))}}
     :consumes [:label :show :on-change]}
+
+   ;; a draggable separator between two subtrees; :size is the main pane's
+   ;; size in cells, and a drag reports through :on-change
+   :resizable-split
+   {:subtrees :two
+    :ctor (fn [id props [main back]]
+            (f/resizable-split-new id main back
+                                   (lookup split-directions (:direction props :left) "split direction")))
+    :ctor-keys [:direction]
+    :apply (fn [id props prev]
+             (when (or (changed? props prev :min) (changed? props prev :max))
+               (f/set-range id (int (:min props 0)) (int (:max props max-split-size)) 1))
+             (when (contains? props :size)
+               (let [v (int (or (:size props) 0))]
+                 (when (not= v (f/get-value id)) (f/set-value id v)))))
+    :events {:on-change {:kind 1 :arg f/get-value}}
+    :consumes [:direction :size :min :max :on-change]}
+
+   ;; tracks whether the mouse is over its subtree
+   :hoverable
+   {:subtrees :one
+    :ctor (fn [id _ [child]] (f/hoverable-new id child))
+    :events {:on-change {:kind 1 :arg #(= 1 (f/get-checked %))}}
+    :consumes [:on-change]}
+
+   ;; a floating, draggable, resizable frame; several of them belong in a
+   ;; [:stack ...], which is the container FTXUI wants them in
+   :floating-window
+   {:subtrees :one
+    :ctor (fn [id _ [child]] (f/window-component-new id child))
+    :apply (fn [id props prev]
+             (when (changed? props prev :title) (f/set-label id (str (:title props ""))))
+             (when (changed? props prev :resize) (push-resize! id (:resize props)))
+             (push-rect! id props))
+    :events {:on-change {:kind 1 :arg window-rect}}
+    :consumes [:title :left :top :width :height :resize :on-change]}
 
    ;; the component is itself a node: its children are its content, and its
    ;; :on-event sees every event before they do

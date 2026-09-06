@@ -143,21 +143,29 @@
 
 (defn- focus-root!
   "Reduce a list of focusable ids to at most one: several get an FTXUI
-  container of `kind` cached at path, whose children they become."
+  container of `kind` cached at path, whose children they become.
+
+  A stacked container takes its children the other way round: FTXUI gives the
+  first one the events, while a :stack draws the last one on top, as a dbox
+  does. Reversing keeps the two in step — what is drawn on top is what the
+  mouse reaches first — and, because the list is pushed again every frame, the
+  order stays the hiccup's own. An app raises a window by moving it in its own
+  list, not by clicking it."
   [ctx path focus kind]
-  (if (> (count focus) 1)
-    (let [cpath (conj path ::container)
-          entry (cache-get ctx cpath)
-          entry (if (and entry (= :container (:type entry)) (= kind (:kind entry)))
-                  entry
-                  (do (dispose! (:mount ctx) cpath entry)
-                      (let [id (create-component! ctx (next-id!))]
-                        (f/container-new id (container-codes kind))
-                        (cache-put! ctx cpath {:type :container :id id :kind kind}))))]
-      (visit! ctx cpath)
-      (f/set-children (:id entry) focus)
-      [(:id entry)])
-    (vec focus)))
+  (let [focus (if (= :stacked kind) (vec (reverse focus)) (vec focus))]
+    (if (> (count focus) 1)
+      (let [cpath (conj path ::container)
+            entry (cache-get ctx cpath)
+            entry (if (and entry (= :container (:type entry)) (= kind (:kind entry)))
+                    entry
+                    (do (dispose! (:mount ctx) cpath entry)
+                        (let [id (create-component! ctx (next-id!))]
+                          (f/container-new id (container-codes kind))
+                          (cache-put! ctx cpath {:type :container :id id :kind kind}))))]
+        (visit! ctx cpath)
+        (f/set-children (:id entry) focus)
+        [(:id entry)])
+      focus)))
 
 (defn- prepare-fn
   "[component-fn & args]: a Form-1 fn returns hiccup; a Form-2 fn returns

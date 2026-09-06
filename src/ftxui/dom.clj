@@ -30,6 +30,9 @@
 (def flex-justify {:flex-start 0 :start 0 :flex-end 1 :end 1 :center 2 :stretch 3
                    :space-between 4 :space-around 5 :space-evenly 6})
 (def separators {:vertical 1 :horizontal 2 :both 3})
+(def canvas-modes
+  "How much of a cell one canvas pixel covers: braille 1x1, block 2x2."
+  {:braille 0 :block 1})
 
 (defn- lookup [table x what]
   (or (get table x)
@@ -49,6 +52,23 @@
                  (int (second x))]
     :else (throw (ex-info (str "dom: bad size " (pr-str x)) {:size x}))))
 
+(defn- gradient-handle
+  "Build this frame's gradient from a spec and return its handle."
+  [c]
+  (let [{:keys [angle stops]} (color/gradient c)
+        g (f/gradient-new angle)]
+    (doseq [[code position] stops]
+      (f/gradient-stop g code (if position (double position) -1.0)))
+    g))
+
+(defn- paint
+  "Apply a color prop to `h`: a plain color through `plain`, a linear gradient
+  through `gradient`."
+  [h c plain gradient]
+  (if (color/gradient? c)
+    (gradient h (gradient-handle c))
+    (plain h (color/code c))))
+
 (defn- apply-border [h b]
   (let [{:keys [style color]} (if (map? b) b {:style b})]
     (f/border h (border-style style) (color/code color))))
@@ -62,8 +82,8 @@
     h
     (as-> h h
       (reduce (fn [h [k code]] (if (get props k) (f/style h code) h)) h text-styles)
-      (if-some [c (:color props)] (f/color h (color/code c)) h)
-      (if-some [c (:bg props)] (f/bgcolor h (color/code c)) h)
+      (if-some [c (:color props)] (paint h c f/color f/color-gradient) h)
+      (if-some [c (:bg props)] (paint h c f/bgcolor f/bgcolor-gradient) h)
       (if-some [b (:border props)] (if b (apply-border h b) h) h)
       (if-some [w (:width props)] (let [[c v] (size-spec w)] (f/size h 0 c v)) h)
       (if-some [hh (:height props)] (let [[c v] (size-spec hh)] (f/size h 1 c v)) h)
@@ -131,6 +151,49 @@
 
 (defn- text-build [node _] (f/text (:text node)))
 
+;; --- canvas ----------------------------------------------------------------
+;; The drawing is data: a :draw list of ops, each [kind & coords props?], so a
+;; component that draws stays a plain function of its state. Coordinates are
+;; pixels, not cells.
+(defn- canvas-value [v]
+  (case v
+    (nil true :on) 1
+    (false :off) 0
+    :toggle 2
+    (throw (ex-info (str "canvas: :value is true, false or :toggle, got " (pr-str v)) {:value v}))))
+
+(defn- draw!
+  "Run one drawing op against canvas handle `cv`."
+  [cv op default-style]
+  (when-not (and (vector? op) (seq op))
+    (throw (ex-info (str "canvas: a drawing op is [kind & args], got " (pr-str op)) {:op op})))
+  (let [[kind & args] op
+        props (if (map? (last args)) (last args) {})
+        args (if (map? (last args)) (butlast args) args)
+        mode (lookup canvas-modes (:style props default-style) "canvas style")
+        col (color/code (:color props))
+        n (fn [x] (int x))]
+    (case kind
+      :point   (let [[x y] args]
+                 (f/canvas-point cv mode (n x) (n y) (canvas-value (:value props)) col))
+      :line    (let [[x1 y1 x2 y2] args]
+                 (f/canvas-line cv mode (n x1) (n y1) (n x2) (n y2) col))
+      :circle  (let [[x y r] args]
+                 (f/canvas-circle cv mode (n x) (n y) (n r) (if (:filled props) 1 0) col))
+      :ellipse (let [[x y rx ry] args]
+                 (f/canvas-ellipse cv mode (n x) (n y) (n rx) (n ry) (if (:filled props) 1 0) col))
+      :text    (let [[x y t] args]
+                 (f/canvas-text cv (n x) (n y) (str t) col))
+      (throw (ex-info (str "canvas: unknown drawing op " (pr-str kind))
+                      {:op op :known [:point :line :circle :ellipse :text]})))))
+
+(defn- canvas-build [node _]
+  (let [p (:props node)
+        cv (f/canvas-new (int (:width p 12)) (int (:height p 12)))
+        style (:style p :braille)]
+    (doseq [op (:draw p)] (draw! cv op style))
+    (f/canvas-element cv)))
+
 (def ^:private layout
   {:kind :layout :consumes []})
 
@@ -157,12 +220,16 @@
                                      (f/gauge (double (:value p 0)) (lookup directions (:direction p :right) "direction"))))}
    :spinner   {:kind :leaf :consumes [:charset :index]
                :build (fn [node _] (let [p (:props node)] (f/spinner (int (:charset p 0)) (int (:index p 0)))))}
+   :canvas    {:kind :leaf :consumes [:width :height :draw :style] :build canvas-build}
    :filler    {:kind :leaf :consumes [] :build (fn [_ _] (f/filler))}
    :empty     {:kind :leaf :consumes [] :build (fn [_ _] (f/empty))}
    ;; layouts
    :hbox      (assoc layout :container :horizontal :build (fn [node build] (f/hbox (mapv build (:children node)))))
    :vbox      (assoc layout :container :vertical   :build (fn [node build] (f/vbox (mapv build (:children node)))))
    :dbox      (assoc layout :container :vertical   :build (fn [node build] (f/dbox (mapv build (:children node)))))
+   ;; like a :dbox, but the layers are an FTXUI stacked container: the top one
+   ;; takes the mouse first, and clicking a layer raises it (floating windows)
+   :stack     (assoc layout :container :stacked    :build (fn [node build] (f/dbox (mapv build (:children node)))))
    :hflow     (assoc layout :container :horizontal :build (fn [node build] (f/hflow (mapv build (:children node)))))
    :vflow     (assoc layout :container :vertical   :build (fn [node build] (f/vflow (mapv build (:children node)))))
    :flexbox   (assoc layout :container :vertical :build flexbox-build
