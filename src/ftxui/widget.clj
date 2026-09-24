@@ -105,10 +105,11 @@
                  (when (not= v (f/get-content id)) (f/set-content id v))))
              (when (changed? props prev :placeholder) (f/set-placeholder id (str (:placeholder props ""))))
              (when (changed? props prev :password) (f/set-password id (->bool (:password props))))
-             (when (changed? props prev :multiline) (f/set-multiline id (->bool (:multiline props)))))
+             (when (changed? props prev :multiline) (f/set-multiline id (->bool (:multiline props))))
+             (when (changed? props prev :wrap) (f/set-wrap id (->bool (:wrap props)))))
     :events {:on-change {:kind 1 :arg f/get-content}
              :on-enter  {:kind 2 :arg f/get-content}}
-    :consumes [:value :placeholder :password :multiline :on-change :on-enter]}
+    :consumes [:value :placeholder :password :multiline :wrap :on-change :on-enter]}
 
    :checkbox
    {:ctor (fn [id _ _] (f/checkbox-new id))

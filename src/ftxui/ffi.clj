@@ -54,6 +54,7 @@
 (ffi/defcfn text "fj_text" [:string] :int)
 (ffi/defcfn vtext "fj_vtext" [:string] :int)
 (ffi/defcfn paragraph "fj_paragraph" [:string :int] :int)
+(ffi/defcfn wrapped "fj_wrapped" [:string] :int)
 (ffi/defcfn separator "fj_separator" [:int] :int)
 (ffi/defcfn separator-char "fj_separator_char" [:string] :int)
 (ffi/defcfn gauge "fj_gauge" [:double :int] :int)
@@ -178,6 +179,7 @@
 (ffi/defcfn set-range "fj_set_range" [:int :int :int :int] :void)
 (ffi/defcfn set-password "fj_set_password" [:int :int] :void)
 (ffi/defcfn set-multiline "fj_set_multiline" [:int :int] :void)
+(ffi/defcfn set-wrap "fj_set_wrap" [:int :int] :void)
 (ffi/defcfn get-cursor-position "fj_get_cursor_position" [:int] :int)
 (ffi/defcfn set-cursor-position "fj_set_cursor_position" [:int :int] :void)
 

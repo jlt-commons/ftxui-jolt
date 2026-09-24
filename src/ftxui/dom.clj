@@ -209,6 +209,9 @@
   {;; text
    :text      {:kind :text :consumes [] :build text-build}
    :vtext     {:kind :text :consumes [] :build (fn [node _] (f/vtext (:text node)))}
+   ;; text as it is — indentation and runs of spaces kept — soft-wrapped at
+   ;; the width it is given, and as tall as its rows
+   :wrapped   {:kind :text :consumes [] :build (fn [node _] (f/wrapped (:text node)))}
    :paragraph {:kind :text :consumes [:align]
                :build (fn [node _] (f/paragraph (:text node) (lookup paragraph-aligns (:align (:props node)) "paragraph alignment")))}
    ;; leaves

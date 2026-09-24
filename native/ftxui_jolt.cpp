@@ -32,6 +32,7 @@
 #include <ftxui/dom/table.hpp>
 #include <ftxui/screen/color.hpp>
 #include <ftxui/screen/screen.hpp>
+#include <ftxui/screen/string.hpp>
 #include <ftxui/screen/terminal.hpp>
 #include <ftxui/util/ref.hpp>
 
@@ -250,6 +251,8 @@ struct Slot {
   bool show = false;
   bool password = false;
   bool multiline = false;
+  // An input that soft-wraps its lines at the width it is given.
+  bool wrap = false;
   bool insert = true;
   int cursor_position = 0;
   int value = 0;
@@ -288,6 +291,289 @@ Slot* new_slot(int32_t id) {
   g_slots[id] = std::move(s);
   return raw;
 }
+
+// --- a soft-wrapping input ----------------------------------------------------
+//
+// FTXUI's Input draws one row per line and lets a long line run off the
+// side. WrapInput wraps it: it owns FTXUI's Input as its only child, which
+// still does the editing, and draws the same content itself as the rows it
+// takes at the width the layout gives it — breaking after a space where it
+// can and inside a word where it cannot. Up/Down and a click move by those
+// rows. With `wrap` off it is the Input, unchanged.
+
+// One row on screen: a byte range of the content, and whether it ends its
+// line (a hard newline or the end), so a cursor on the boundary of a soft
+// break belongs to the row after it.
+struct WrapRow {
+  size_t start;
+  size_t end;
+  bool last_of_line;
+};
+
+// A glyph is a code point and the zero-width ones riding on it. Only the
+// public string_width is used, so this builds against an installed FTXUI.
+size_t codepoint_next(const std::string& s, size_t p) {
+  if (p >= s.size()) return s.size();
+  ++p;
+  while (p < s.size() && (static_cast<unsigned char>(s[p]) & 0xC0) == 0x80) ++p;
+  return p;
+}
+
+size_t glyph_next(const std::string& s, size_t p) {
+  size_t n = codepoint_next(s, p);
+  while (n < s.size() && s[n] != '\n') {
+    const size_t m = codepoint_next(s, n);
+    if (string_width(s.substr(n, m - n)) != 0) break;
+    n = m;
+  }
+  return n;
+}
+
+int glyph_cells(const std::string& s, size_t p) {
+  return string_width(s.substr(p, glyph_next(s, p) - p));
+}
+
+int cells_between(const std::string& s, size_t from, size_t to) {
+  return string_width(s.substr(from, to - from));
+}
+
+// The rows `content` takes at `width` cells; width <= 0 is unbounded. A space
+// may hang past the edge rather than open a row of its own.
+std::vector<WrapRow> wrap_rows(const std::string& content, int width) {
+  std::vector<WrapRow> rows;
+  size_t line_start = 0;
+  while (true) {
+    size_t line_end = content.find('\n', line_start);
+    if (line_end == std::string::npos) line_end = content.size();
+    size_t row_start = line_start;
+    size_t last_break = std::string::npos;
+    int col = 0;
+    size_t p = line_start;
+    while (p < line_end) {
+      const size_t next = glyph_next(content, p);
+      const int w = glyph_cells(content, p);
+      const bool space = content[p] == ' ';
+      if (!space && width > 0 && col + w > width && p > row_start) {
+        const size_t at = (last_break != std::string::npos && last_break > row_start) ? last_break : p;
+        rows.push_back({row_start, at, false});
+        row_start = at;
+        last_break = std::string::npos;
+        col = cells_between(content, row_start, p);
+      }
+      col += w;
+      if (space) last_break = next;
+      p = next;
+    }
+    rows.push_back({row_start, line_end, true});
+    if (line_end >= content.size()) break;
+    line_start = line_end + 1;
+  }
+  return rows;
+}
+
+int row_of(const std::vector<WrapRow>& rows, size_t cursor) {
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const WrapRow& r = rows[i];
+    if (r.start <= cursor && (cursor < r.end || (cursor == r.end && r.last_of_line))) {
+      return static_cast<int>(i);
+    }
+  }
+  return static_cast<int>(rows.size()) - 1;
+}
+
+// The position in `row` nearest to `col` cells from its start. A soft break's
+// end is the next row's start, so a cursor stops a glyph short of it.
+size_t position_at(const std::string& s, const WrapRow& row, int col) {
+  size_t p = row.start;
+  size_t previous = row.start;
+  int c = 0;
+  while (p < row.end) {
+    const int w = glyph_cells(s, p);
+    if (c + w > col) break;
+    c += w;
+    previous = p;
+    p = glyph_next(s, p);
+  }
+  if (p == row.end && !row.last_of_line) p = previous;
+  return p;
+}
+
+// What the layout decided, shared by the element that learns the width and
+// the component that moves the cursor by it.
+struct WrapShared {
+  int width = 0;       // the cells a row may take, as last laid out
+  Box box;             // where the input was drawn
+  Box cursor_box;      // where the cursor was drawn
+};
+
+// The rows as an element — an input's, with its cursor, or plain text's
+// (cursor npos). The width is only known once the layout hands it a box, so
+// it lays itself out again when that width is not the one its rows were
+// built for — within the same frame (Node::Check).
+class WrapText : public Node {
+ public:
+  WrapText(std::string content, size_t cursor, bool show_cursor,
+           std::function<Element(Element)> focused, std::shared_ptr<WrapShared> shared)
+      : content_(std::move(content)), cursor_(cursor), show_cursor_(show_cursor),
+        focused_(std::move(focused)), shared_(std::move(shared)) {}
+
+  // Plain text: no cursor, and the whole width is the text's.
+  explicit WrapText(std::string content)
+      : content_(std::move(content)), cursor_(std::string::npos), show_cursor_(false),
+        shared_(std::make_shared<WrapShared>()) {}
+
+  void ComputeRequirement() override {
+    if (children_.empty()) Build(shared_->width);
+    children_[0]->ComputeRequirement();
+    requirement_ = children_[0]->requirement();
+    requirement_.min_x = 1;
+  }
+
+  void SetBox(Box box) override {
+    Node::SetBox(box);
+    // An input keeps a cell free at the end of a row for the cursor.
+    const int cells = box.x_max - box.x_min + 1;
+    const int width = std::max(1, cursor_ == std::string::npos ? cells : cells - 1);
+    if (width != built_) {
+      shared_->width = width;
+      Build(width);
+      children_[0]->ComputeRequirement();
+      dirty_ = true;
+    }
+    children_[0]->SetBox(box);
+  }
+
+  void Check(Status* status) override {
+    Node::Check(status);
+    status->need_iteration |= dirty_;
+    dirty_ = false;
+  }
+
+ private:
+  void Build(int width) {
+    built_ = width;
+    const std::vector<WrapRow> rows = wrap_rows(content_, width);
+    const int at = cursor_ == std::string::npos ? -1 : row_of(rows, cursor_);
+    Elements lines;
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+      const WrapRow& r = rows[i];
+      const std::string line = content_.substr(r.start, r.end - r.start);
+      if (i != at) {
+        lines.push_back(text(line));
+        continue;
+      }
+      const size_t c = cursor_ - r.start;
+      if (c >= line.size()) {
+        lines.push_back(hbox({text(line),
+                              focused_(text(show_cursor_ ? " " : "")) | reflect(shared_->cursor_box)}) |
+                        xflex);
+        continue;
+      }
+      const size_t g = glyph_next(line, c);
+      lines.push_back(hbox({text(line.substr(0, c)),
+                            focused_(text(line.substr(c, g - c))) | reflect(shared_->cursor_box),
+                            text(line.substr(g))}) |
+                      xflex);
+    }
+    children_ = {vbox(std::move(lines))};
+  }
+
+  std::string content_;
+  size_t cursor_;
+  bool show_cursor_;
+  std::function<Element(Element)> focused_;
+  std::shared_ptr<WrapShared> shared_;
+  int built_ = -1;
+  bool dirty_ = false;
+};
+
+class WrapInput : public ComponentBase {
+ public:
+  WrapInput(Slot* slot, Component input, std::function<void()> on_change)
+      : slot_(slot), input_(std::move(input)), on_change_(std::move(on_change)) {
+    Add(input_);
+  }
+
+  Element OnRender() override {
+    if (!slot_->wrap) return input_->Render();
+    const bool is_focused = input_->Focused();
+    Decorator focused = (!is_focused && !hovered_) ? Decorator(focus)
+                        : slot_->insert           ? Decorator(focusCursorBarBlinking)
+                                                  : Decorator(focusCursorBlockBlinking);
+    const std::string& content = slot_->content;
+    Element element;
+    if (content.empty()) {
+      element = text(slot_->placeholder) | dim | focused | xflex | yframe;
+    } else {
+      slot_->cursor_position = std::clamp(slot_->cursor_position, 0, static_cast<int>(content.size()));
+      element = std::make_shared<WrapText>(content, slot_->cursor_position, is_focused,
+                                           [focused](Element e) { return e | focused; }, shared_) |
+                yframe;
+    }
+    if (is_focused) {
+      element |= inverted;
+    } else if (hovered_) {
+      element |= underlined;
+    }
+    return element | xflex | reflect(shared_->box);
+  }
+
+  bool OnEvent(Event event) override {
+    if (!slot_->wrap) return ComponentBase::OnEvent(event);
+    if (event.is_mouse()) return OnMouse(event);
+    if (input_->Focused() && (event == Event::ArrowUp || event == Event::ArrowDown)) {
+      return MoveRow(event == Event::ArrowUp ? -1 : 1);
+    }
+    return ComponentBase::OnEvent(event);
+  }
+
+ private:
+  std::vector<WrapRow> Rows() const { return wrap_rows(slot_->content, shared_->width); }
+
+  bool MoveRow(int by) {
+    const std::string& s = slot_->content;
+    const std::vector<WrapRow> rows = Rows();
+    const size_t cursor = static_cast<size_t>(slot_->cursor_position);
+    const int at = row_of(rows, cursor);
+    const int to = at + by;
+    if (to < 0 || to >= static_cast<int>(rows.size())) {
+      // Off the top or the bottom: to the start or the end, then let it go.
+      const int edge = by < 0 ? 0 : static_cast<int>(s.size());
+      if (slot_->cursor_position == edge) return false;
+      slot_->cursor_position = edge;
+      return true;
+    }
+    const int col = cells_between(s, rows[at].start, cursor);
+    slot_->cursor_position = static_cast<int>(position_at(s, rows[to], col));
+    return true;
+  }
+
+  bool OnMouse(Event event) {
+    const Mouse& m = event.mouse();
+    hovered_ = shared_->box.Contain(m.x, m.y) && CaptureMouse(event);
+    if (!hovered_ || m.button != Mouse::Left || m.motion != Mouse::Pressed) return false;
+    input_->TakeFocus();
+    const std::string& s = slot_->content;
+    if (s.empty()) {
+      slot_->cursor_position = 0;
+      return true;
+    }
+    const std::vector<WrapRow> rows = Rows();
+    const int at = row_of(rows, static_cast<size_t>(slot_->cursor_position));
+    const int to = std::clamp(at + m.y - shared_->cursor_box.y_min, 0, static_cast<int>(rows.size()) - 1);
+    const int pos = static_cast<int>(position_at(s, rows[to], m.x - shared_->box.x_min));
+    if (pos == slot_->cursor_position) return true;
+    slot_->cursor_position = pos;
+    if (on_change_) on_change_();
+    return true;
+  }
+
+  Slot* slot_;
+  Component input_;
+  std::function<void()> on_change_;
+  std::shared_ptr<WrapShared> shared_ = std::make_shared<WrapShared>();
+  bool hovered_ = false;
+};
 
 // A component whose rendering and event handling are delegated to jolt.
 class JoltNode : public ComponentBase {
@@ -420,6 +706,10 @@ const char* fj_version(void) { return "ftxui-jolt 0.1.0"; }
 // --- elements ---------------------------------------------------------------
 int32_t fj_text(const char* s) { return push(text(std::string(s ? s : ""))); }
 int32_t fj_vtext(const char* s) { return push(vtext(std::string(s ? s : ""))); }
+
+int32_t fj_wrapped(const char* s) {
+  return push(std::make_shared<WrapText>(s ? s : ""));
+}
 
 int32_t fj_paragraph(const char* s, int32_t align) {
   const std::string str(s ? s : "");
@@ -772,7 +1062,7 @@ void fj_input_new(int32_t id) {
   opt.cursor_position = &s->cursor_position;
   opt.on_change = [id] { fire(id, FJ_ACTION_CHANGE); };
   opt.on_enter = [id] { fire(id, FJ_ACTION_ENTER); };
-  s->comp = Input(opt);
+  s->comp = Make<WrapInput>(s, Input(opt), [id] { fire(id, FJ_ACTION_CHANGE); });
 }
 
 void fj_checkbox_new(int32_t id) {
@@ -1059,6 +1349,7 @@ void fj_set_range(int32_t id, int32_t min, int32_t max, int32_t increment) {
 }
 void fj_set_password(int32_t id, int32_t b) { if (Slot* s = slot(id)) s->password = b != 0; }
 void fj_set_multiline(int32_t id, int32_t b) { if (Slot* s = slot(id)) s->multiline = b != 0; }
+void fj_set_wrap(int32_t id, int32_t b) { if (Slot* s = slot(id)) s->wrap = b != 0; }
 int32_t fj_get_cursor_position(int32_t id) { Slot* s = slot(id); return s ? s->cursor_position : 0; }
 void fj_set_cursor_position(int32_t id, int32_t pos) { if (Slot* s = slot(id)) s->cursor_position = pos; }
 

@@ -103,6 +103,9 @@ FJ_API int32_t fj_text(const char* s);
 FJ_API int32_t fj_vtext(const char* s);
 /* align: 0 default (paragraph), 1 left, 2 right, 3 center, 4 justify */
 FJ_API int32_t fj_paragraph(const char* s, int32_t align);
+/* Text as it is, whitespace kept, soft-wrapped at the width it is given:
+   after a space where it can, inside a word where it cannot. */
+FJ_API int32_t fj_wrapped(const char* s);
 /* style: -1 default, else ftxui::BorderStyle (0 light, 1 dashed, 2 heavy, 3 double, 4 rounded, 5 empty) */
 FJ_API int32_t fj_separator(int32_t style);
 FJ_API int32_t fj_separator_char(const char* s);
@@ -264,6 +267,8 @@ FJ_API int32_t fj_get_value(int32_t id);
 FJ_API void fj_set_range(int32_t id, int32_t min, int32_t max, int32_t increment);
 FJ_API void fj_set_password(int32_t id, int32_t b);
 FJ_API void fj_set_multiline(int32_t id, int32_t b);
+/* Soft-wrap the input's lines at the width it is given (1) or not (0). */
+FJ_API void fj_set_wrap(int32_t id, int32_t b);
 FJ_API int32_t fj_get_cursor_position(int32_t id);
 FJ_API void fj_set_cursor_position(int32_t id, int32_t pos);
 
