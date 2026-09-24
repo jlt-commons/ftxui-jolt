@@ -204,6 +204,25 @@
     :events {:on-change {:kind 1 :arg f/get-value}}
     :consumes [:direction :size :min :max :on-change]}
 
+   ;; a pane that scrolls its subtree by rows: :top is the first row shown,
+   ;; nil to follow the bottom as it grows; the wheel over it scrolls it.
+   ;; :on-change gets {:top :max :rows} — :max the last top row, :rows the
+   ;; rows shown — whenever the view or its extent moves, so keys the
+   ;; application handles can page it. Leave :top out to let it keep its own.
+   :scroll
+   {:subtrees :one
+    :ctor (fn [id _ [child]] (f/scroll-new id child))
+    :apply (fn [id props _prev]
+             (when (contains? props :top)
+               (let [v (if-let [t (:top props)] (int t) -1)]
+                 (when (not= v (f/scroll-get id 0)) (f/set-value id v)))))
+    :events {:on-change {:kind 1 :arg (fn [id]
+                                        (let [t (f/scroll-get id 0)]
+                                          {:top (when-not (neg? t) t)
+                                           :max (f/scroll-get id 1)
+                                           :rows (f/scroll-get id 2)}))}}
+    :consumes [:top :on-change]}
+
    ;; tracks whether the mouse is over its subtree
    :hoverable
    {:subtrees :one

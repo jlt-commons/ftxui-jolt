@@ -510,11 +510,8 @@ class WrapInput : public ComponentBase {
                                            [focused](Element e) { return e | focused; }, shared_) |
                 yframe;
     }
-    if (is_focused) {
-      element |= inverted;
-    } else if (hovered_) {
-      element |= underlined;
-    }
+    // No inverted focus style: the cursor already says where the focus is,
+    // and a whole box in reverse video reads as a white slab on a dark theme.
     return element | xflex | reflect(shared_->box);
   }
 
@@ -602,6 +599,103 @@ class JoltNode : public ComponentBase {
 // refs they were given and offer no callback of their own, so this wraps them
 // and fires FJ_ACTION_CHANGE once an event left the watched state elsewhere.
 // State pushed from jolt is not a user change: the setters call resync.
+// --- a scrolling pane ----------------------------------------------------------
+//
+// FTXUI's yframe scrolls to keep the FOCUSED element in view: a pane of plain
+// rows cannot be scrolled at all, and a pane holding widgets scrolls wherever
+// the focus happens to sit. ScrollFrame scrolls by ROWS. The slot's `value` is
+// the top row shown, or -1 to follow the bottom as the content grows; the
+// wheel over the pane moves it three rows, and scrolling back past the end
+// follows again. `max` (the last top row) and `height` (rows shown) are
+// written on every layout, so an application can page it from keys of its own.
+
+class ScrollNode : public Node {
+ public:
+  ScrollNode(Element child, Slot* s) : Node(Elements{std::move(child)}), s_(s) {}
+
+  void ComputeRequirement() override {
+    children_[0]->ComputeRequirement();
+    requirement_ = children_[0]->requirement();
+    requirement_.min_x += 1;  // the scrollbar's column
+    requirement_.min_y = 0;
+    requirement_.flex_grow_y = 1;
+    requirement_.flex_shrink_y = 1;
+  }
+
+  void SetBox(Box box) override {
+    Node::SetBox(box);
+    content_ = children_[0]->requirement().min_y;
+    rows_ = std::max(0, box.y_max - box.y_min + 1);
+    const int max = std::max(0, content_ - rows_);
+    s_->max = max;
+    s_->height = rows_;
+    top_ = s_->value < 0 ? max : std::clamp(s_->value, 0, max);
+    Box inner = box;
+    inner.x_max = box.x_max - 1;
+    inner.y_min = box.y_min - top_;
+    inner.y_max = inner.y_min + std::max(content_, rows_) - 1;
+    children_[0]->SetBox(inner);
+  }
+
+  void Render(Screen& screen) override {
+    const Box saved = screen.stencil;
+    screen.stencil = Box::Intersection(box_, screen.stencil);
+    children_[0]->Render(screen);
+    screen.stencil = saved;
+    // A border cut by the pane's edge must not merge with the frame around
+    // it: the side lines of a box scrolled half out would join the panel's
+    // separator as ┬ and ┴.
+    for (int x = box_.x_min; x <= box_.x_max && rows_ > 0; ++x) {
+      screen.PixelAt(x, box_.y_min).automerge = false;
+      screen.PixelAt(x, box_.y_max).automerge = false;
+    }
+    if (content_ <= rows_ || rows_ <= 0) return;
+    // A thumb in the reserved column: its size is the share of the content
+    // shown, its place where the view is.
+    const int thumb = std::max(1, rows_ * rows_ / content_);
+    const int at = (rows_ - thumb) * top_ / std::max(1, content_ - rows_);
+    for (int y = 0; y < rows_; ++y) {
+      screen.PixelAt(box_.x_max, box_.y_min + y).character =
+          (y >= at && y < at + thumb) ? "┃" : " ";
+    }
+  }
+
+ private:
+  Slot* s_;
+  int content_ = 0;
+  int rows_ = 0;
+  int top_ = 0;
+};
+
+class ScrollFrame : public ComponentBase {
+ public:
+  ScrollFrame(Slot* s, Component child) : s_(s) { Add(std::move(child)); }
+
+  Element OnRender() override {
+    return std::make_shared<ScrollNode>(ChildAt(0)->Render(), s_) | reflect(box_);
+  }
+
+  bool OnEvent(Event event) override {
+    if (event.is_mouse()) {
+      const Mouse& m = event.mouse();
+      // A row scrolled out of the pane is still laid out where it would be,
+      // over some other pane; a click there is not this pane's to deliver.
+      if (!box_.Contain(m.x, m.y)) return false;
+      if (m.button == Mouse::WheelUp || m.button == Mouse::WheelDown) {
+        const int top = s_->value < 0 ? s_->max : s_->value;
+        const int to = std::max(0, top + (m.button == Mouse::WheelUp ? -3 : 3));
+        s_->value = to >= s_->max ? -1 : to;
+        return true;
+      }
+    }
+    return ComponentBase::OnEvent(event);
+  }
+
+ private:
+  Slot* s_;
+  Box box_;
+};
+
 class ChangeWatcher : public ComponentBase {
  public:
   ChangeWatcher(int32_t id, Component child, std::function<int64_t()> state)
@@ -1193,6 +1287,32 @@ void fj_resizable_split_new(int32_t id, int32_t main, int32_t back, int32_t dir)
   opt.min = &s->min;
   opt.max = &s->max;
   watch(s, ResizableSplit(opt), [s] { return static_cast<int64_t>(s->value); });
+}
+
+void fj_scroll_new(int32_t id, int32_t child) {
+  Component c = comp(child);
+  if (!c) return;
+  Slot* s = new_slot(id);
+  s->value = -1;
+  s->max = 0;
+  s->height = 0;
+  // Reports a change of the view AND of how far it can go, so the jolt side
+  // always holds a current `max` to page from.
+  watch(s, Make<ScrollFrame>(s, c), [s] {
+    return (static_cast<int64_t>(s->value + 1) << 32) | static_cast<uint32_t>(s->max);
+  });
+}
+
+// A scroll pane's geometry: 0 the top row (-1 following), 1 the last top row,
+// 2 the rows shown.
+int32_t fj_scroll_get(int32_t id, int32_t which) {
+  Slot* s = slot(id);
+  if (!s) return 0;
+  switch (which) {
+    case 0: return s->value;
+    case 1: return s->max;
+    default: return s->height;
+  }
 }
 
 void fj_hoverable_new(int32_t id, int32_t child) {
