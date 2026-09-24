@@ -115,6 +115,7 @@ a seq in `[:vbox ...]`).
 | `:text` | strings, concatenated | `[:text "n=" @n]` |
 | `:vtext` | strings | vertical text |
 | `:paragraph` | strings | wraps words; `:align :left/:right/:center/:justify` |
+| `:wrapped` | strings | text as it is, whitespace kept, soft-wrapped at the width given: after a space where it can, inside a word too long for the row |
 | `:separator` | — | `:style` (a border style) or `:char "·"`; orients itself |
 | `:gauge` | — | `:value` 0–1, `:direction :right/:left/:up/:down` |
 | `:spinner` | — | `:charset` (0–22), `:index` — one frame; advance `:index` yourself |
@@ -179,7 +180,7 @@ colors the text but not the border. Nest explicit tags for a different order:
 | tag | props | events |
 |---|---|---|
 | `:button` | `:label` (or a string child), `:style :simple/:ascii/:border/:animated` | `:on-click` |
-| `:input` | `:value`, `:placeholder`, `:password`, `:multiline` | `:on-change` (text), `:on-enter` (text) |
+| `:input` | `:value`, `:placeholder`, `:password`, `:multiline`, `:wrap` (soft-wrap long lines at the width given; the box is as tall as its rows) | `:on-change` (text), `:on-enter` (text) |
 | `:checkbox` | `:label`, `:checked` | `:on-change` (boolean) |
 | `:menu` | `:entries`, `:selected`, `:direction :down/:up/:left/:right`, `:style :plain/:animated/:toggle` | `:on-change` (index), `:on-enter` (index) |
 | `:toggle` | `:entries`, `:selected` | as menu |

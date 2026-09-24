@@ -127,3 +127,15 @@
 
 (deftest unknown-tags-throw
   (is (thrown? Exception (ui/render-text [:no-such-tag "x"] 3 1))))
+
+(deftest wrapped-text-keeps-its-whitespace-and-wraps-at-the-width
+  (testing "breaks after a space, and the next element sits below every row"
+    (is (= ["the quick" "brown fox" "below"]
+           (lines (ui/render-text [:vbox [:wrapped "the quick brown fox"] [:text "below"]] 9 3)))))
+  (testing "indentation and runs of spaces survive"
+    (is (= ["  a    b"] (take 1 (lines (ui/render-text [:wrapped "  a    b"] 9 1))))))
+  (testing "a word wider than the row breaks inside it, where a :paragraph clips it"
+    (is (= ["abcd" "efgh" "ij"] (lines (ui/render-text [:wrapped "abcdefghij"] 4 3))))
+    (is (= ["abcd" "" ""] (lines (ui/render-text [:paragraph "abcdefghij"] 4 3)))))
+  (testing "newlines start rows"
+    (is (= ["ab" "cd"] (lines (ui/render-text [:wrapped "ab\ncd"] 4 2))))))

@@ -353,3 +353,51 @@
   (let [app (fn [] [:button {:label "b" :style :ascii :border true}])]
     (with-screen [s app]
       (is (= ["╭───╮" "│[b]│" "╰───╯"] (lines (ui/render-text s 5 3)))))))
+
+;; --- :wrap — the input soft-wraps at the width it is given --------------------
+
+(defn- wrapped-input [text & {:as more}]
+  [:input (merge {:value @text :multiline true :wrap true
+                  :on-change #(reset! text %)} more)])
+
+(deftest a-wrapped-input-breaks-long-lines-at-a-word
+  (let [text (atom "the quick brown fox")]
+    (with-screen [s #(wrapped-input text)]
+      (is (= ["the quick" "brown fox"] (take 2 (lines (ui/render-text s 10 3)))))
+      (testing "a word longer than the row is broken inside it"
+        (reset! text "abcdefghijklmnop")
+        (is (= ["abcdefghi" "jklmnop"] (take 2 (lines (ui/render-text s 10 3))))))
+      (testing "a hard newline still starts a row"
+        (reset! text "ab\ncd")
+        (is (= ["ab" "cd"] (take 2 (lines (ui/render-text s 10 3)))))))))
+
+(deftest a-wrapped-input-is-as-tall-as-its-rows-in-the-same-frame
+  (let [text (atom "the quick brown fox")]
+    (with-screen [s (fn [] [:vbox (wrapped-input text) [:text "below"]])]
+      (is (= ["the quick" "brown fox" "below"] (take 3 (lines (ui/render-text s 10 4))))))))
+
+(deftest without-wrap-an-input-keeps-one-row-per-line
+  (let [text (atom "the quick brown fox")]
+    (with-screen [s (fn [] [:vbox [:input {:value @text :multiline true}] [:text "below"]])]
+      (is (= "below" (second (lines (ui/render-text s 10 3))))))))
+
+(deftest up-and-down-move-by-the-rows-on-screen
+  (let [text (atom "aaaa bbbb")]
+    (with-screen [s #(wrapped-input text)]
+      (ui/render-text s 6 3)
+      (ui/send-key! s :end)
+      (ui/send-key! s :arrow-up)
+      (ui/send-char! s "X")
+      (is (= "aaaaX bbbb" @text) "up from the end of the second row lands on the first, same column")
+      (ui/render-text s 6 3)
+      (ui/send-key! s :arrow-down)
+      (ui/send-char! s "Y")
+      (is (= "aaaaX bbbbY" @text)))))
+
+(deftest a-click-puts-the-cursor-on-the-row-clicked
+  (let [text (atom "aaaa bbbb")]
+    (with-screen [s #(wrapped-input text)]
+      (ui/render-text s 6 3)
+      (ui/send-mouse! s {:x 2 :y 1})
+      (ui/send-char! s "X")
+      (is (= "aaaa bbXbb" @text)))))
