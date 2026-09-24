@@ -140,6 +140,8 @@
 (ffi/defcfn collapsible-new "fj_collapsible_new" [:int :int] :void)
 (ffi/defcfn resizable-split-new "fj_resizable_split_new" [:int :int :int :int] :void)
 (ffi/defcfn hoverable-new "fj_hoverable_new" [:int :int] :void)
+(ffi/defcfn scroll-new "fj_scroll_new" [:int :int] :void)
+(ffi/defcfn scroll-get "fj_scroll_get" [:int :int] :int)
 (ffi/defcfn window-component-new "fj_window_component_new" [:int :int] :void)
 (ffi/defcfn window-set-rect "fj_window_set_rect" [:int :int :int :int :int] :void)
 (ffi/defcfn window-get "fj_window_get" [:int :int] :int)

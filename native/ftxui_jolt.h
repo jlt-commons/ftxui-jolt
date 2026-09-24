@@ -224,6 +224,8 @@ FJ_API void fj_resizable_split_new(int32_t id, int32_t main, int32_t back, int32
 /* Tracks whether the mouse is over `child`: the state is the slot's checked
  * flag, and a change fires FJ_ACTION_CHANGE. */
 FJ_API void fj_hoverable_new(int32_t id, int32_t child);
+FJ_API void fj_scroll_new(int32_t id, int32_t child);
+FJ_API int32_t fj_scroll_get(int32_t id, int32_t which);
 /* A floating, draggable, resizable frame around `inner`, titled by the slot's
  * label. Several of them belong in one stacked container. A drag or a resize
  * moves the geometry below and fires FJ_ACTION_CHANGE. */

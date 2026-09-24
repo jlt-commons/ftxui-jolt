@@ -401,3 +401,42 @@
       (ui/send-mouse! s {:x 2 :y 1})
       (ui/send-char! s "X")
       (is (= "aaaa bbXbb" @text)))))
+
+(deftest scroll-follows-the-bottom-and-the-wheel-scrolls-it
+  (let [seen (atom [])
+        top (atom nil)
+        rows (fn [] (into [:vbox] (for [i (range 10)] [:text (str "r" i)])))
+        app (fn [] [:scroll {:top @top :on-change #(do (swap! seen conj %) (reset! top (:top %)))}
+                    (rows)])]
+    (with-screen [s app]
+      (is (= ["r7" "r8" "r9 ┃"] (map str/trimr (lines (ui/render-text s 4 3))))
+          "following: the newest rows, the thumb at the foot of the last column")
+      (ui/send-mouse! s {:x 0 :y 1 :button :wheel-up :motion :pressed})
+      (is (= {:top 4 :max 7 :rows 3} (last @seen)) "three rows up from the bottom")
+      (is (= ["r4" "r5 ┃" "r6"] (map str/trimr (lines (ui/render-text s 4 3)))))
+      (ui/send-mouse! s {:x 0 :y 1 :button :wheel-down :motion :pressed})
+      (is (nil? (:top (last @seen))) "back at the end: following again")
+      (testing "the wheel outside the pane is not its"
+        (let [n (count @seen)]
+          (ui/send-mouse! s {:x 0 :y 9 :button :wheel-up :motion :pressed})
+          (is (= n (count @seen)))))
+      (testing ":top set from outside is where it shows"
+        (reset! top 0)
+        (is (= ["r0 ┃" "r1" "r2"] (map str/trimr (lines (ui/render-text s 4 3)))))))))
+
+(deftest the-focus-stays-on-its-widget-when-siblings-appear
+  ;; A container knew its focused child by index: a menu appearing ahead of
+  ;; an input moved the focus to the menu, and typing went nowhere.
+  (let [menu? (atom false)
+        text (atom "")
+        app (fn [] [:vbox
+                    (when @menu? [:menu {:entries ["a" "b"] :selected 0}])
+                    [:checkbox {:label "x"}]
+                    [:input {:autofocus true :value @text :on-change #(reset! text %)}]])]
+    (with-screen [s app]
+      (ui/render-text s 20 5)
+      (reset! menu? true)
+      (ui/refresh! s)
+      (ui/render-text s 20 5)
+      (ui/send-char! s "hi")
+      (is (= "hi" @text)))))

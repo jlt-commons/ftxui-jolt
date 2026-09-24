@@ -180,7 +180,7 @@ colors the text but not the border. Nest explicit tags for a different order:
 | tag | props | events |
 |---|---|---|
 | `:button` | `:label` (or a string child), `:style :simple/:ascii/:border/:animated` | `:on-click` |
-| `:input` | `:value`, `:placeholder`, `:password`, `:multiline`, `:wrap` (soft-wrap long lines at the width given; the box is as tall as its rows) | `:on-change` (text), `:on-enter` (text) |
+| `:input` | `:value`, `:placeholder`, `:password`, `:multiline`, `:wrap` (soft-wrap long lines at the width given; the box is as tall as its rows, and focus shows as the cursor rather than reverse video) | `:on-change` (text), `:on-enter` (text) |
 | `:checkbox` | `:label`, `:checked` | `:on-change` (boolean) |
 | `:menu` | `:entries`, `:selected`, `:direction :down/:up/:left/:right`, `:style :plain/:animated/:toggle` | `:on-change` (index), `:on-enter` (index) |
 | `:toggle` | `:entries`, `:selected` | as menu |
@@ -192,6 +192,7 @@ colors the text but not the border. Nest explicit tags for a different order:
 | `:maybe` | `:show`; one child subtree | — |
 | `:resizable-split` | `:direction :left/:right/:up/:down`, `:size` (cells), `:min`, `:max`; two children | `:on-change` (size) |
 | `:hoverable` | one child subtree | `:on-change` (boolean) |
+| `:scroll` | `:top` (first row shown; `nil` follows the bottom), one child subtree; the wheel over it scrolls three rows | `:on-change` (`{:top :max :rows}`) |
 | `:floating-window` | `:title`, `:left`, `:top`, `:width`, `:height`, `:resize`; one child subtree | `:on-change` (`{:left :top :width :height}`) |
 | `:catch-event` | `:on-event`; the children it guards | `:on-event` (event map) |
 

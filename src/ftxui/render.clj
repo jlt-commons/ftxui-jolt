@@ -346,18 +346,37 @@
             :when (not (contains? visited path))]
       (dispose! m path entry))))
 
+(defn- focused-leaf
+  "The id of the leaf widget holding the focus, or nil."
+  [m]
+  (some (fn [[_ e]] (when (and (= :widget (:type e)) (empty? (:subs e))
+                               (= 1 (f/focused (:id e))))
+                      (:id e)))
+        @(:cache m)))
+
 (defn prepare-frame!
   "Run the root component, walk its hiccup, keep the FTXUI component tree in
   step, and return the prepared root node (stored on the mount for the
-  render callback as well)."
+  render callback as well).
+
+  THE FOCUS STAYS WHERE IT WAS. A container is rebuilt when its focusable
+  children change — one created where there was a single child, or a new
+  sibling ahead of the focused one — and a fresh container focuses its first
+  child. So the widget that held the focus before the frame gets it back,
+  while it is still mounted, unless the frame asked for an :autofocus."
   [m]
-  (let [ctx {:mount m :visited (atom #{}) :autofocus (atom [])}
+  (let [held (focused-leaf m)
+        ctx {:mount m :visited (atom #{}) :autofocus (atom [])}
         {:keys [node focus]} (prepare ctx (:hiccup m) [])
         root-id (:root-id m)
         focus (focus-root! ctx [] (or focus []) :vertical)]
     (f/set-children root-id focus)
     (sweep! ctx)
-    (doseq [id @(:autofocus ctx)] (f/take-focus id))
+    (if (seq @(:autofocus ctx))
+      (doseq [id @(:autofocus ctx)] (f/take-focus id))
+      (when (and held (zero? (f/focused held))
+                 (some #(= held (:id %)) (vals @(:cache m))))
+        (f/take-focus held)))
     (swap! (:subtrees m) assoc root-id node)
     node))
 
