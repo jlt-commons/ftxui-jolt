@@ -84,7 +84,9 @@ typedef void (*fj_action_fn)(int32_t id, int32_t kind);
 /* A node received an event. Return non-zero if handled. */
 typedef int32_t (*fj_event_fn)(int32_t id, const fj_event* ev);
 
-enum { FJ_ACTION_CLICK = 0, FJ_ACTION_CHANGE = 1, FJ_ACTION_ENTER = 2 };
+enum { FJ_ACTION_CLICK = 0, FJ_ACTION_CHANGE = 1, FJ_ACTION_ENTER = 2,
+       /* an input's Up on its top row / Down on its bottom row (fj_set_edges) */
+       FJ_ACTION_EDGE_UP = 3, FJ_ACTION_EDGE_DOWN = 4 };
 
 FJ_API void fj_set_callbacks(fj_render_fn render, fj_action_fn action, fj_event_fn event);
 FJ_API const char* fj_version(void);
@@ -249,6 +251,10 @@ FJ_API int32_t fj_focusable(int32_t id);
 FJ_API int32_t fj_component_render(int32_t id);
 /* Headless render of a component to plain text (see fj_render_text). */
 FJ_API const char* fj_component_render_text(int32_t id, int32_t w, int32_t h);
+/* The text a drag from (x0,y0) to (x1,y1) would select in the component's
+   next frame on a w x h screen — the headless mirror of fj_app_get_selection. */
+FJ_API const char* fj_component_selection_text(int32_t id, int32_t w, int32_t h,
+                                               int32_t x0, int32_t y0, int32_t x1, int32_t y1);
 
 /* slot state */
 FJ_API void fj_set_label(int32_t id, const char* s);
@@ -271,6 +277,10 @@ FJ_API void fj_set_password(int32_t id, int32_t b);
 FJ_API void fj_set_multiline(int32_t id, int32_t b);
 /* Soft-wrap the input's lines at the width it is given (1) or not (0). */
 FJ_API void fj_set_wrap(int32_t id, int32_t b);
+/* Whether Up on the input's top row / Down on its bottom row fires
+   FJ_ACTION_EDGE_UP / _DOWN (and is handled) instead of moving the cursor to
+   the start / end. Only a wrapping input has rows to be at the edge of. */
+FJ_API void fj_set_edges(int32_t id, int32_t up, int32_t down);
 FJ_API int32_t fj_get_cursor_position(int32_t id);
 FJ_API void fj_set_cursor_position(int32_t id, int32_t pos);
 
@@ -299,6 +309,15 @@ FJ_API void fj_app_force_handle_ctrl_c(void* app, int32_t force);
 FJ_API void fj_app_force_handle_ctrl_z(void* app, int32_t force);
 /* The app currently running a loop, or NULL. */
 FJ_API void* fj_app_active(void);
+/* The text the mouse has selected, as of the last frame drawn ("" for none). */
+FJ_API const char* fj_app_get_selection(void* app);
+/* Write bytes to the terminal as they are, flushed — an escape sequence the
+   app does not speak itself (OSC 52, a clipboard write). Call from the loop's
+   own thread, between frames, so it cannot land inside one. */
+FJ_API void fj_write_raw(const char* s);
+/* The same write, posted to the app's loop: safe from any thread, and it
+   lands between frames. */
+FJ_API void fj_app_post_raw(void* app, const char* s);
 
 /* Stepping the loop by hand instead of fj_app_loop. */
 FJ_API void* fj_loop_new(void* app, int32_t root);

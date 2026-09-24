@@ -440,3 +440,83 @@
       (ui/render-text s 20 5)
       (ui/send-char! s "hi")
       (is (= "hi" @text)))))
+
+;; --- the edges of an input, and selection ------------------------------------
+
+(deftest up-on-the-top-row-and-down-on-the-bottom-are-the-callers
+  ;; A prompt wants Up past its first row to mean the previous entry, which
+  ;; only the input can tell: it alone knows which row the cursor is on.
+  (let [text (atom "aaaa bbbb")
+        edges (atom [])]
+    (with-screen [s #(wrapped-input text :on-up-edge (fn [] (swap! edges conj :up))
+                                    :on-down-edge (fn [] (swap! edges conj :down)))]
+      (ui/render-text s 6 3)
+      (ui/send-key! s :end)
+      (ui/send-key! s :arrow-down)
+      (is (= [:down] @edges) "down on the bottom row")
+      (ui/send-key! s :arrow-up)
+      (is (= [:down] @edges) "up from the bottom row is a row, not an edge")
+      (is (true? (ui/send-key! s :arrow-up)) "the edge is handled, not passed on")
+      (is (= [:down :up] @edges) "up on the top row, without first going to its start")
+      (is (= "aaaa bbbb" @text)))))
+
+(deftest without-edge-handlers-up-at-the-top-still-lets-go
+  (let [text (atom "ab")]
+    (with-screen [s #(wrapped-input text)]
+      (ui/render-text s 6 3)
+      (ui/send-key! s :end)
+      (is (true? (ui/send-key! s :arrow-up)) "first to the start")
+      (is (false? (ui/send-key! s :arrow-up)) "then it lets go, for the focus to move"))))
+
+(deftest a-value-set-from-outside-leaves-the-cursor-at-its-end
+  ;; A recalled entry or a completion is edited from its end, as a shell does.
+  (let [text (atom "")]
+    (with-screen [s #(wrapped-input text)]
+      (ui/render-text s 20 3)
+      (reset! text "hello")
+      (ui/refresh! s)
+      (ui/send-char! s "X")
+      (is (= "helloX" @text)))))
+
+(deftest a-press-in-an-input-is-left-for-a-selection-to-start
+  ;; The app starts a drag-selection only from a press nobody claimed; the
+  ;; input claimed every one to place its cursor, so its text could not be
+  ;; selected. It still places the cursor.
+  (let [text (atom "aaaa bbbb")]
+    (with-screen [s #(wrapped-input text)]
+      (ui/render-text s 6 3)
+      (is (false? (ui/send-mouse! s {:x 2 :y 1})))
+      (ui/send-char! s "X")
+      (is (= "aaaa bbXbb" @text)))))
+
+(deftest an-inputs-text-can-be-selected
+  (let [text (atom "aaaa bbbb")]
+    (with-screen [s (fn [] [:vbox (wrapped-input text) [:text "below"]])]
+      (is (= "bbbb" (ui/selection-text s 6 3 [0 1 3 1])))
+      (testing "a soft wrap is the space it was, not a newline"
+        (is (= "aaaa bbbb" (ui/selection-text s 6 3 [0 0 3 1]))))
+      (testing "and on past the input, a row down"
+        (is (= "aaaa bbbb\nbelow" (ui/selection-text s 6 3 [0 0 5 2]))))
+      (testing "a newline typed is a newline copied"
+        (reset! text "ab\ncd")
+        (is (= "ab\ncd" (ui/selection-text s 6 3 [0 0 1 1])))))))
+
+(deftest wrapped-text-copies-as-the-text-it-is
+  ;; :wrapped is how a long reply is drawn; copying it should not break its
+  ;; sentences at the pane's width.
+  (with-screen [s (fn [] [:wrapped "the quick brown fox"])]
+    (is (= "the quick brown fox" (ui/selection-text s 10 3 [0 0 9 1])))))
+
+(deftest a-drag-is-a-selection-and-a-click-is-not
+  (let [press {:type :mouse :button :left :motion :pressed :x 1 :y 1}
+        move  {:type :mouse :button :left :motion :moved :x 5 :y 2}
+        up    {:type :mouse :button :left :motion :released :x 5 :y 2}
+        run   (fn [events] (reduce (fn [[st _] e] (ui/track-drag st e)) [nil false] events))]
+    (is (true? (second (run [press move up]))))
+    (is (false? (second (run [press up]))) "a click selects nothing worth keeping")
+    (is (false? (second (run [press {:type :key :key :tab} up]))))
+    (is (false? (second (run [move up]))) "a release with no press of its own")))
+
+(deftest osc52-carries-the-text-base64
+  (is (= "\u001b]52;c;aGVsbG8=\u0007" (ui/osc52 "hello")))
+  (is (= "\u001b]52;c;0L/RgNC40LLQtdGC\u0007" (ui/osc52 "привет"))))

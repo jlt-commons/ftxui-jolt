@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iostream>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -253,6 +254,10 @@ struct Slot {
   bool multiline = false;
   // An input that soft-wraps its lines at the width it is given.
   bool wrap = false;
+  // Whether Up on its top row / Down on its bottom row goes to the caller
+  // (FJ_ACTION_EDGE_UP / _DOWN) rather than moving to the start / end.
+  bool edge_up = false;
+  bool edge_down = false;
   bool insert = true;
   int cursor_position = 0;
   int value = 0;
@@ -423,6 +428,9 @@ class WrapText : public Node {
         shared_(std::make_shared<WrapShared>()) {}
 
   void ComputeRequirement() override {
+    // Runs before every frame: a selection is re-made by Select, when there
+    // is one, so an old one must not outlive it.
+    selected_.clear();
     if (children_.empty()) Build(shared_->width);
     children_[0]->ComputeRequirement();
     requirement_ = children_[0]->requirement();
@@ -449,10 +457,60 @@ class WrapText : public Node {
     dirty_ = false;
   }
 
+  // Selected as the TEXT, not as the rows it is drawn in: a soft break is
+  // the space (or nothing) it was, and only a newline in the content is a
+  // newline copied. The rows' own text nodes would each report a line, so
+  // they are not asked; this node reports once and draws the highlight.
+  void Select(Selection& selection) override {
+    selected_.clear();
+    if (Box::Intersection(selection.GetBox(), box_).IsEmpty()) return;
+    std::string part;
+    int left = -1, right = -1, last_y = -1;
+    for (int i = 0; i < static_cast<int>(rows_.size()); ++i) {
+      const int y = box_.y_min + i;
+      if (y < selection.GetBox().y_min || y > selection.GetBox().y_max || y > box_.y_max) continue;
+      const Selection row_sel = selection.SaturateHorizontal(Box{box_.x_min, box_.x_max, y, y});
+      const int a = row_sel.GetBox().x_min;
+      const int b = row_sel.GetBox().x_max;
+      const WrapRow& r = rows_[i];
+      size_t from = std::string::npos, to = r.start;
+      int x = box_.x_min;
+      for (size_t p = r.start; p < r.end; p = glyph_next(content_, p)) {
+        const int w = glyph_cells(content_, p);
+        if (x >= a && x + std::max(w, 1) - 1 <= b) {
+          if (from == std::string::npos) from = p;
+          to = glyph_next(content_, p);
+        }
+        x += std::max(w, 1);
+      }
+      if (last_y >= 0 && i > 0 && rows_[i - 1].last_of_line) part += '\n';
+      if (from != std::string::npos) part += content_.substr(from, to - from);
+      selected_.push_back({y, a, std::min(b, x - 1)});
+      if (left < 0) left = a;
+      right = b;
+      last_y = y;
+    }
+    if (last_y >= 0) selection.AddPart(part, last_y, left, right);
+  }
+
+  void Render(Screen& screen) override {
+    Node::Render(screen);
+    for (const Selected& s : selected_) {
+      for (int x = s.left; x <= s.right; ++x) screen.GetSelectionStyle()(screen.CellAt(x, s.y));
+    }
+  }
+
  private:
+  struct Selected {
+    int y;
+    int left;
+    int right;
+  };
+
   void Build(int width) {
     built_ = width;
-    const std::vector<WrapRow> rows = wrap_rows(content_, width);
+    rows_ = wrap_rows(content_, width);
+    const std::vector<WrapRow>& rows = rows_;
     const int at = cursor_ == std::string::npos ? -1 : row_of(rows, cursor_);
     Elements lines;
     for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
@@ -483,6 +541,8 @@ class WrapText : public Node {
   bool show_cursor_;
   std::function<Element(Element)> focused_;
   std::shared_ptr<WrapShared> shared_;
+  std::vector<WrapRow> rows_;
+  std::vector<Selected> selected_;
   int built_ = -1;
   bool dirty_ = false;
 };
@@ -534,7 +594,13 @@ class WrapInput : public ComponentBase {
     const int at = row_of(rows, cursor);
     const int to = at + by;
     if (to < 0 || to >= static_cast<int>(rows.size())) {
-      // Off the top or the bottom: to the start or the end, then let it go.
+      // Off the top or the bottom with a caller who wants it: theirs (a
+      // prompt's history, say).
+      if (by < 0 ? slot_->edge_up : slot_->edge_down) {
+        fire(slot_->id, by < 0 ? FJ_ACTION_EDGE_UP : FJ_ACTION_EDGE_DOWN);
+        return true;
+      }
+      // Otherwise to the start or the end, then let it go.
       const int edge = by < 0 ? 0 : static_cast<int>(s.size());
       if (slot_->cursor_position == edge) return false;
       slot_->cursor_position = edge;
@@ -550,19 +616,22 @@ class WrapInput : public ComponentBase {
     hovered_ = shared_->box.Contain(m.x, m.y) && CaptureMouse(event);
     if (!hovered_ || m.button != Mouse::Left || m.motion != Mouse::Pressed) return false;
     input_->TakeFocus();
+    // The press places the cursor and is then LEFT UNCLAIMED: the app starts
+    // a drag-selection only from a press no component handled, and an input
+    // that claimed every press was the one place text could not be selected.
     const std::string& s = slot_->content;
     if (s.empty()) {
       slot_->cursor_position = 0;
-      return true;
+      return false;
     }
     const std::vector<WrapRow> rows = Rows();
     const int at = row_of(rows, static_cast<size_t>(slot_->cursor_position));
     const int to = std::clamp(at + m.y - shared_->cursor_box.y_min, 0, static_cast<int>(rows.size()) - 1);
     const int pos = static_cast<int>(position_at(s, rows[to], m.x - shared_->box.x_min));
-    if (pos == slot_->cursor_position) return true;
+    if (pos == slot_->cursor_position) return false;
     slot_->cursor_position = pos;
     if (on_change_) on_change_();
-    return true;
+    return false;
   }
 
   Slot* slot_;
@@ -1412,6 +1481,22 @@ int32_t fj_active(int32_t id) {
   return c && c->Active() ? 1 : 0;
 }
 
+const char* fj_component_selection_text(int32_t id, int32_t w, int32_t h,
+                                        int32_t x0, int32_t y0, int32_t x1, int32_t y1) {
+  g_string_result.clear();
+  Component c = comp(id);
+  if (!c) return g_string_result.c_str();
+  ++g_depth;
+  Element e = c->Render();
+  --g_depth;
+  Screen screen = Screen::Create(Dimension::Fixed(w), Dimension::Fixed(h));
+  Selection selection(x0, y0, x1, y1);
+  Render(screen, e.get(), selection);
+  g_string_result = selection.GetParts();
+  clear_arena_if_outermost();
+  return g_string_result.c_str();
+}
+
 int32_t fj_focusable(int32_t id) {
   Component c = comp(id);
   return c && c->Focusable() ? 1 : 0;
@@ -1470,6 +1555,12 @@ void fj_set_range(int32_t id, int32_t min, int32_t max, int32_t increment) {
 void fj_set_password(int32_t id, int32_t b) { if (Slot* s = slot(id)) s->password = b != 0; }
 void fj_set_multiline(int32_t id, int32_t b) { if (Slot* s = slot(id)) s->multiline = b != 0; }
 void fj_set_wrap(int32_t id, int32_t b) { if (Slot* s = slot(id)) s->wrap = b != 0; }
+void fj_set_edges(int32_t id, int32_t up, int32_t down) {
+  if (Slot* s = slot(id)) {
+    s->edge_up = up != 0;
+    s->edge_down = down != 0;
+  }
+}
 int32_t fj_get_cursor_position(int32_t id) { Slot* s = slot(id); return s ? s->cursor_position : 0; }
 void fj_set_cursor_position(int32_t id, int32_t pos) { if (Slot* s = slot(id)) s->cursor_position = pos; }
 
@@ -1548,6 +1639,22 @@ void fj_app_force_handle_ctrl_z(void* app, int32_t force) {
 }
 
 void* fj_app_active(void) { return App::Active(); }
+
+const char* fj_app_get_selection(void* app) {
+  g_string_result = app ? static_cast<App*>(app)->GetSelection() : std::string();
+  return g_string_result.c_str();
+}
+
+void fj_write_raw(const char* s) {
+  if (!s) return;
+  std::cout << s << std::flush;
+}
+
+void fj_app_post_raw(void* app, const char* s) {
+  if (!app || !s) return;
+  std::string bytes(s);
+  static_cast<App*>(app)->Post([bytes] { std::cout << bytes << std::flush; });
+}
 
 void* fj_loop_new(void* app, int32_t root) {
   Component c = comp(root);

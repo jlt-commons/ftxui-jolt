@@ -102,14 +102,28 @@
     :apply (fn [id props prev]
              (when (contains? props :value)
                (let [v (str (:value props))]
-                 (when (not= v (f/get-content id)) (f/set-content id v))))
+                 ;; A value set from outside — cleared, completed, recalled —
+                 ;; is edited from its end, as a shell's line is. What the
+                 ;; user typed is already the content, so it never lands here.
+                 (when (not= v (f/get-content id))
+                   (f/set-content id v)
+                   (f/set-cursor-position id (count (.getBytes v "UTF-8"))))))
+             (let [edges [(boolean (:on-up-edge props)) (boolean (:on-down-edge props))]]
+               (when (not= edges [(boolean (:on-up-edge prev)) (boolean (:on-down-edge prev))])
+                 (f/set-edges id (->bool (first edges)) (->bool (second edges)))))
              (when (changed? props prev :placeholder) (f/set-placeholder id (str (:placeholder props ""))))
              (when (changed? props prev :password) (f/set-password id (->bool (:password props))))
              (when (changed? props prev :multiline) (f/set-multiline id (->bool (:multiline props))))
              (when (changed? props prev :wrap) (f/set-wrap id (->bool (:wrap props)))))
+    ;; :on-up-edge / :on-down-edge: Up on the top row, Down on the bottom
+    ;; one (a wrapping input's rows) — a prompt's history. With neither, Up
+    ;; and Down there go to the start and end and then let the focus move.
     :events {:on-change {:kind 1 :arg f/get-content}
-             :on-enter  {:kind 2 :arg f/get-content}}
-    :consumes [:value :placeholder :password :multiline :wrap :on-change :on-enter]}
+             :on-enter  {:kind 2 :arg f/get-content}
+             :on-up-edge {:kind 3}
+             :on-down-edge {:kind 4}}
+    :consumes [:value :placeholder :password :multiline :wrap :on-change :on-enter
+               :on-up-edge :on-down-edge]}
 
    :checkbox
    {:ctor (fn [id _ _] (f/checkbox-new id))

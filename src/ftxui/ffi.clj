@@ -182,6 +182,7 @@
 (ffi/defcfn set-password "fj_set_password" [:int :int] :void)
 (ffi/defcfn set-multiline "fj_set_multiline" [:int :int] :void)
 (ffi/defcfn set-wrap "fj_set_wrap" [:int :int] :void)
+(ffi/defcfn set-edges "fj_set_edges" [:int :int :int] :void)
 (ffi/defcfn get-cursor-position "fj_get_cursor_position" [:int] :int)
 (ffi/defcfn set-cursor-position "fj_set_cursor_position" [:int :int] :void)
 
@@ -193,6 +194,8 @@
 (defn send-char [id s] (ffi/with-c-string [p (str s)] (send-char* id p)))
 (ffi/defcfn send-mouse "fj_send_mouse" [:int :int :int :int :int] :int :blocking)
 (ffi/defcfn send-custom "fj_send_custom" [:int] :int :blocking)
+(ffi/defcfn component-selection-text "fj_component_selection_text"
+  [:int :int :int :int :int :int :int] :string)
 
 ;; --- app / loop ---------------------------------------------------------------
 (ffi/defcfn app-new "fj_app_new" [:int :int :int] :pointer)
@@ -209,6 +212,9 @@
 (ffi/defcfn app-force-handle-ctrl-c "fj_app_force_handle_ctrl_c" [:pointer :int] :void)
 (ffi/defcfn app-force-handle-ctrl-z "fj_app_force_handle_ctrl_z" [:pointer :int] :void)
 (ffi/defcfn app-active "fj_app_active" [] :pointer)
+(ffi/defcfn app-get-selection "fj_app_get_selection" [:pointer] :string)
+(ffi/defcfn write-raw "fj_write_raw" [:string] :void)
+(ffi/defcfn app-post-raw "fj_app_post_raw" [:pointer :string] :void)
 
 (ffi/defcfn loop-new "fj_loop_new" [:pointer :int] :pointer)
 (ffi/defcfn loop-free "fj_loop_free" [:pointer] :void)
