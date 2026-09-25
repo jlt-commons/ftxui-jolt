@@ -864,7 +864,7 @@ void fj_set_callbacks(fj_render_fn render, fj_action_fn action, fj_event_fn even
   g_event = event;
 }
 
-const char* fj_version(void) { return "ftxui-jolt 0.1.0"; }
+const char* fj_version(void) { return "ftxui-jolt 0.3.0"; }
 
 // --- elements ---------------------------------------------------------------
 int32_t fj_text(const char* s) { return push(text(std::string(s ? s : ""))); }
