@@ -390,7 +390,7 @@
         (f/text (str "render error: " (some-> @(:error m) ex-message))))
     0))
 
-(def ^:private kind->event {0 :on-click 1 :on-change 2 :on-enter})
+(def ^:private kind->event {0 :on-click 1 :on-change 2 :on-enter 3 :on-up-edge 4 :on-down-edge})
 
 (defn- on-action [id kind]
   (when-let [{:keys [fn arg]} (get-in @handlers [id (kind->event kind)])]

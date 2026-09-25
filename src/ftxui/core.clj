@@ -27,7 +27,8 @@
   keys and read the frame back as text. That is how the test suite drives
   real FTXUI widgets without a terminal."
   (:refer-clojure :exclude [atom])
-  (:require [ftxui.ffi :as f]
+  (:require [clojure.string :as str]
+            [ftxui.ffi :as f]
             [ftxui.keys :as keys]
             [ftxui.render :as r]))
 
@@ -94,6 +95,53 @@
     (refresh!))
   nil)
 
+(defn track-drag
+  "One step of telling a drag from a click, for :on-select. `state` is nil or
+  the press being held; returns `[state' finished?]`, finished? true on the
+  release that ends a left-button press which MOVED — a drag, whose selection
+  is worth keeping. A click also leaves FTXUI a one-cell selection, which is
+  not. Pure, so it is testable without a terminal."
+  [state {:keys [type button motion x y]}]
+  (if (and (= :mouse type) (= :left button))
+    (case motion
+      :pressed  [{:x x :y y :moved? false} false]
+      :moved    [(when state
+                   (assoc state :moved? (or (:moved? state)
+                                            (not= [x y] [(:x state) (:y state)]))))
+                 false]
+      :released [nil (boolean (:moved? state))]
+      [state false])
+    [state false]))
+
+(defn osc52
+  "The escape sequence asking the terminal to put `text` on the system
+  clipboard (OSC 52). Terminals that allow it — Ghostty, kitty, WezTerm, and
+  iTerm2 with the setting on — take it over ssh as well; the rest ignore it."
+  [text]
+  (str "\u001b]52;c;"
+       (.encodeToString (java.util.Base64/getEncoder) (.getBytes (str text) "UTF-8"))
+       "\u0007"))
+
+(defn write-raw!
+  "Send `s` to the terminal as it is — an escape sequence FTXUI does not speak
+  itself: a clipboard write, a desktop notification. Posted to the running
+  app's loop, so it is safe from any thread and lands between frames, never
+  inside one. Nothing is written when no app is running."
+  [s]
+  (when-let [app @r/active-app] (f/app-post-raw app (str s)))
+  nil)
+
+(defn copy!
+  "Put `text` on the clipboard through the terminal (see osc52)."
+  [text]
+  (write-raw! (osc52 text)))
+
+(defn selection
+  "The text the mouse has selected in the running app, as of the last frame
+  drawn; \"\" when nothing is selected or no app is running."
+  []
+  (if-let [app @r/active-app] (str (f/app-get-selection app)) ""))
+
 (defn run
   "Mount `component` (a component fn, or hiccup) and run the FTXUI loop on
   the calling thread until exit! (or Ctrl-C). Options:
@@ -105,6 +153,8 @@
     :mouse         false to leave mouse tracking off
     :on-event      (fn [event]) that sees every event first; return truthy
                    to consume it
+    :on-select     (fn [text]) called when a mouse drag that selected text is
+                   released — to copy! it, say. A click is not a selection.
     :auto-exit-ms  exit after this many milliseconds (smoke tests)
     :async         true to run the loop on another thread and return a
                    future right away — for a REPL session (jolt nrepl-server)
@@ -112,8 +162,20 @@
 
   An exception thrown by a handler or a render stops the loop and is
   rethrown here."
-  [component & {:keys [mode width height mouse on-event auto-exit-ms async] :as _opts}]
-  (let [m (r/mount component {:on-event on-event})
+  [component & {:keys [mode width height mouse on-event on-select auto-exit-ms async] :as _opts}]
+  (let [drag (clojure.core/atom nil)
+        on-event (if on-select
+                   (fn [e]
+                     ;; Before the app sees the release: the selection is the
+                     ;; one the last frame drew, which is where the drag ended.
+                     (let [[st done?] (track-drag @drag e)]
+                       (reset! drag st)
+                       (when done?
+                         (let [t (selection)]
+                           (when-not (str/blank? t) (on-select t)))))
+                     (when on-event (on-event e)))
+                   on-event)
+        m (r/mount component {:on-event on-event})
         mode (or mode :fullscreen)
         app (f/app-new (or (get modes mode)
                            (throw (ex-info (str "run: unknown :mode " mode) {:mode mode :known (keys modes)})))
@@ -159,6 +221,16 @@
 (defn- with-temp-screen [component f]
   (let [s (mount component)]
     (try (f s) (finally (unmount! s)))))
+
+(defn selection-text
+  "The text a mouse drag from [x0 y0] to [x1 y1] would select in the next
+  frame of a headless screen rendered w x h — what `selection` answers in a
+  running app."
+  [screen w h [x0 y0 x1 y1]]
+  (let [out (f/component-selection-text (:root-id screen) (int w) (int h)
+                                        (int x0) (int y0) (int x1) (int y1))]
+    (r/check-error! screen)
+    out))
 
 (defn render-text
   "Render the next frame of a headless screen — or of a bare component /
