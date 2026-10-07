@@ -252,8 +252,11 @@ Stops left unplaced are spread evenly between their neighbours.
 - `(run component & opts)` — mount and run the loop on the calling thread until
   `exit!` or Ctrl-C. Options: `:mode` (`:fullscreen` default, `:fit-component`,
   `:terminal-output`, `:fixed` with `:width`/`:height`, `:fullscreen-alternate`,
-  `:fullscreen-primary`), `:mouse false`, `:on-event`, `:auto-exit-ms`, and
-  `:async true` to run on another thread and return a future.
+  `:fullscreen-primary`), `:mouse false`, `:on-event`, `:auto-exit-ms`,
+  `:force-ctrl-c false` / `:force-ctrl-z false` to let the app's `:on-event`
+  own Ctrl-C / Ctrl-Z (FTXUI otherwise quits or suspends even when the event
+  was consumed), and `:async true` to run on another thread and return a
+  future.
 - `(exit!)` — stop the loop, from any thread.
 - `(refresh!)` — redraw after a state change made outside a handler (thread-safe).
 - `(atom x)` — a clojure atom that calls `refresh!` when it changes.

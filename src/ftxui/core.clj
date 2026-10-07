@@ -155,6 +155,10 @@
                    to consume it
     :on-select     (fn [text]) called when a mouse drag that selected text is
                    released — to copy! it, say. A click is not a selection.
+    :force-ctrl-c  false to let the app own Ctrl+C: FTXUI otherwise quits on
+                   it even when on-event consumed it (default true)
+    :force-ctrl-z  false likewise for Ctrl+Z, which FTXUI otherwise suspends
+                   on (default true)
     :auto-exit-ms  exit after this many milliseconds (smoke tests)
     :async         true to run the loop on another thread and return a
                    future right away — for a REPL session (jolt nrepl-server)
@@ -162,7 +166,8 @@
 
   An exception thrown by a handler or a render stops the loop and is
   rethrown here."
-  [component & {:keys [mode width height mouse on-event on-select auto-exit-ms async] :as _opts}]
+  [component & {:keys [mode width height mouse on-event on-select auto-exit-ms async
+                       force-ctrl-c force-ctrl-z] :as _opts}]
   (let [drag (clojure.core/atom nil)
         on-event (if on-select
                    (fn [e]
@@ -185,6 +190,8 @@
                (reset! r/active-app app)
                (reset! r/current-mount m)
                (when (false? mouse) (f/app-track-mouse app 0))
+               (when (false? force-ctrl-c) (f/app-force-handle-ctrl-c app 0))
+               (when (false? force-ctrl-z) (f/app-force-handle-ctrl-z app 0))
                (when auto-exit-ms
                  (future (Thread/sleep auto-exit-ms) (f/app-exit app)))
                (f/app-loop app (:root-id m))
