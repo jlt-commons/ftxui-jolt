@@ -520,3 +520,18 @@
 (deftest osc52-carries-the-text-base64
   (is (= "\u001b]52;c;aGVsbG8=\u0007" (ui/osc52 "hello")))
   (is (= "\u001b]52;c;0L/RgNC40LLQtdGC\u0007" (ui/osc52 "привет"))))
+
+(deftest run-hands-ctrl-c-to-the-app-when-asked
+  ;; FTXUI quits on Ctrl+C even when the component consumed it, unless
+  ;; ForceHandleCtrlC is off. An app that gives Ctrl+C a meaning of its own
+  ;; (clear the line, confirm before quitting) needs to say so.
+  (let [calls (atom [])]
+    (with-redefs [ftxui.ffi/app-new (fn [& _] :app)
+                  ftxui.ffi/app-loop (fn [& _] nil)
+                  ftxui.ffi/app-free (fn [& _] nil)
+                  ftxui.ffi/app-force-handle-ctrl-c (fn [_ v] (swap! calls conj [:c v]))
+                  ftxui.ffi/app-force-handle-ctrl-z (fn [_ v] (swap! calls conj [:z v]))]
+      (ui/run (fn [] [:text "x"]))
+      (is (empty? @calls) "by default FTXUI's behaviour stands")
+      (ui/run (fn [] [:text "x"]) :force-ctrl-c false :force-ctrl-z false)
+      (is (= [[:c 0] [:z 0]] @calls)))))
