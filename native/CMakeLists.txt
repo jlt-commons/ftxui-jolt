@@ -1,5 +1,8 @@
 # Builds libftxui_jolt — the C shim jolt binds — with FTXUI linked in statically,
-# so the single shared object is all the runtime needs.
+# so the single shared object is all the runtime needs. It also builds
+# libftxui_jolt.a, the same shim and FTXUI in one archive, which `jolt build`
+# links into an application's binary so the binary doesn't need the shared
+# object at the path it was built from.
 #
 # Where FTXUI comes from, in order:
 #   1. -DFTXUI_SOURCE_DIR=/path/to/FTXUI (or the env var of the same name):
@@ -57,6 +60,45 @@ add_library(ftxui_jolt SHARED ftxui_jolt.cpp)
 target_include_directories(ftxui_jolt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ftxui_jolt PRIVATE ftxui::component ftxui::dom ftxui::screen)
 target_compile_options(ftxui_jolt PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra>)
+
+# The static shim, and one archive holding it and FTXUI's three, so deps.edn
+# declares a single :static archive.
+add_library(ftxui_jolt_shim STATIC ftxui_jolt.cpp)
+target_include_directories(ftxui_jolt_shim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ftxui_jolt_shim PRIVATE ftxui::component ftxui::dom ftxui::screen)
+target_compile_options(ftxui_jolt_shim PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra>)
+
+set(FTXUI_JOLT_ARCHIVE "${CMAKE_CURRENT_SOURCE_DIR}/libftxui_jolt.a")
+set(FTXUI_JOLT_PARTS
+  $<TARGET_FILE:ftxui_jolt_shim>
+  $<TARGET_FILE:ftxui::component>
+  $<TARGET_FILE:ftxui::dom>
+  $<TARGET_FILE:ftxui::screen>)
+if(APPLE)
+  add_custom_command(OUTPUT "${FTXUI_JOLT_ARCHIVE}"
+    COMMAND rm -f "${FTXUI_JOLT_ARCHIVE}"
+    COMMAND libtool -static -o "${FTXUI_JOLT_ARCHIVE}" ${FTXUI_JOLT_PARTS}
+    DEPENDS ftxui_jolt_shim ftxui::component ftxui::dom ftxui::screen
+    VERBATIM)
+else()
+  # GNU ar merges archives through an MRI script
+  set(FTXUI_JOLT_MRI "${CMAKE_CURRENT_BINARY_DIR}/ftxui_jolt.mri")
+  file(GENERATE OUTPUT "${FTXUI_JOLT_MRI}" CONTENT
+"create ${FTXUI_JOLT_ARCHIVE}
+addlib $<TARGET_FILE:ftxui_jolt_shim>
+addlib $<TARGET_FILE:ftxui::component>
+addlib $<TARGET_FILE:ftxui::dom>
+addlib $<TARGET_FILE:ftxui::screen>
+save
+end
+")
+  add_custom_command(OUTPUT "${FTXUI_JOLT_ARCHIVE}"
+    COMMAND rm -f "${FTXUI_JOLT_ARCHIVE}"
+    COMMAND ${CMAKE_AR} -M < "${FTXUI_JOLT_MRI}"
+    DEPENDS ftxui_jolt_shim ftxui::component ftxui::dom ftxui::screen "${FTXUI_JOLT_MRI}"
+    VERBATIM)
+endif()
+add_custom_target(ftxui_jolt_archive ALL DEPENDS "${FTXUI_JOLT_ARCHIVE}")
 
 # Land the artifact beside the source, where deps.edn's :jolt/native looks.
 set_target_properties(ftxui_jolt PROPERTIES

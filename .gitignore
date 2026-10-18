@@ -8,6 +8,7 @@ target/
 native/build/
 native/libftxui_jolt.dylib
 native/libftxui_jolt.so
+native/libftxui_jolt.a
 native/ftxui_jolt.dll
 
 # jolt build cache
