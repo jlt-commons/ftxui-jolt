@@ -282,6 +282,14 @@
     (after-event! screen)
     handled))
 
+(defn send-input!
+  "Deliver the bytes a terminal sends for one key — an escape sequence such
+  as \"\\u001b[1;3D\" (Option+Left) — as the loop would after parsing them."
+  [screen s]
+  (let [handled (= 1 (f/send-input (:root-id screen) (str s)))]
+    (after-event! screen)
+    handled))
+
 (defn send-mouse!
   "Deliver a mouse event: {:button :left :motion :pressed :x 3 :y 1}."
   [screen {:keys [button motion x y] :or {button :left motion :pressed x 0 y 0}}]

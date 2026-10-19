@@ -287,6 +287,9 @@ FJ_API void fj_set_cursor_position(int32_t id, int32_t pos);
 /* --- driving a component directly (headless tests) ------------------------- */
 FJ_API int32_t fj_send_key(int32_t id, int32_t key);
 FJ_API int32_t fj_send_char(int32_t id, const char* utf8);
+/* Deliver the bytes a terminal sends for a key (an escape sequence, say) as
+   FTXUI's parser would after normalizing them: a special event. */
+FJ_API int32_t fj_send_input(int32_t id, const char* bytes);
 FJ_API int32_t fj_send_mouse(int32_t id, int32_t button, int32_t motion, int32_t x, int32_t y);
 FJ_API int32_t fj_send_custom(int32_t id);
 

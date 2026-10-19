@@ -192,6 +192,8 @@
 ;; through a C string we allocate for the call.
 (ffi/defcfn ^:private send-char* "fj_send_char" [:int :pointer] :int :blocking)
 (defn send-char [id s] (ffi/with-c-string [p (str s)] (send-char* id p)))
+(ffi/defcfn ^:private send-input* "fj_send_input" [:int :pointer] :int :blocking)
+(defn send-input [id s] (ffi/with-c-string [p (str s)] (send-input* id p)))
 (ffi/defcfn send-mouse "fj_send_mouse" [:int :int :int :int :int] :int :blocking)
 (ffi/defcfn send-custom "fj_send_custom" [:int] :int :blocking)
 (ffi/defcfn component-selection-text "fj_component_selection_text"
