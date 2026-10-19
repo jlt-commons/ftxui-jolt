@@ -90,6 +90,43 @@
       (is (= "hi" @entered))
       (is (str/starts-with? (ui/render-text s 6 1) "hi") "without :value the widget keeps its own text"))))
 
+(deftest input-on-key-edits-the-text-and-the-cursor
+  ;; :on-key sees a key before the input does, with the text and the cursor
+  ;; (a character index), and may answer a new text and cursor: how an app
+  ;; gives the box editing keys of its own — a word back, a line killed.
+  (let [text (atom "")
+        seen (atom [])
+        app (fn [] [:input {:value @text
+                            :on-change #(reset! text %)
+                            :on-key (fn [e {:keys [value cursor]}]
+                                      (swap! seen conj [e value cursor])
+                                      (case (or (:key e) (:input e))
+                                        :ctrl-a {:cursor 0}
+                                        :ctrl-u {:value (subs value cursor) :cursor 0}
+                                        "\u001b[1;3D" {:cursor (max 0 (- cursor 2))}
+                                        nil))}])]
+    (with-screen [s app]
+      (ui/send-char! s "héllo")
+      (is (= "héllo" @text))
+      (testing "a key it answers moves the cursor, counted in characters"
+        (is (ui/send-key! s :ctrl-a))
+        (ui/send-char! s "X")
+        (is (= "Xhéllo" @text)))
+      (testing "a raw sequence reaches it as :input"
+        (ui/send-key! s :end)
+        (is (ui/send-input! s "\u001b[1;3D"))
+        (ui/send-char! s "Y")
+        (is (= "XhélYlo" @text)))
+      (testing "a new value goes to :on-change, with the cursor where it said"
+        (is (ui/send-key! s :ctrl-u))
+        (is (= "lo" @text))
+        (ui/send-char! s "Z")
+        (is (= "Zlo" @text)))
+      (testing "nil leaves the key to the input"
+        (ui/send-key! s :backspace)
+        (is (= [:backspace "Zlo" 1] (let [[e v c] (last @seen)] [(:key e) v c])))
+        (is (= "lo" @text))))))
+
 (deftest checkbox-toggles
   (let [on  (atom false)
         app (fn [] [:checkbox {:label "done" :checked @on :on-change #(reset! on %)}])]

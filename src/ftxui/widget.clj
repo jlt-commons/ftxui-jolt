@@ -122,8 +122,10 @@
              :on-enter  {:kind 2 :arg f/get-content}
              :on-up-edge {:kind 3}
              :on-down-edge {:kind 4}}
+    ;; :on-key (fn [event {:keys [value cursor]}]) sees each key before the
+    ;; input does and may answer {:value :cursor} — see render/input-key.
     :consumes [:value :placeholder :password :multiline :wrap :on-change :on-enter
-               :on-up-edge :on-down-edge]}
+               :on-up-edge :on-down-edge :on-key]}
 
    :checkbox
    {:ctor (fn [id _ _] (f/checkbox-new id))

@@ -380,6 +380,39 @@
     (swap! (:subtrees m) assoc root-id node)
     node))
 
+;; --- an input's own keys ---------------------------------------------------------
+;; FTXUI's cursor is a byte offset into the UTF-8 content; :on-key speaks in
+;; characters, as the value it is handed does.
+(defn- utf8-length [s] (count (.getBytes (str s) "UTF-8")))
+
+(defn- byte->char [s b]
+  (loop [i 0]
+    (if (and (< i (count s)) (< (utf8-length (subs s 0 i)) b)) (recur (inc i)) i)))
+
+(defn- char->byte [s c]
+  (utf8-length (subs s 0 (max 0 (min c (count s))))))
+
+(defn- input-key
+  "Offer event `e` to the focused input's :on-key, if it has one:
+  (on-key e {:value :cursor}) answers nil to leave the key to the input, or
+  {:value :cursor} — either may be left out — to put that text and cursor
+  in the box, :on-change told of a new value. Truthy when it answered."
+  [m e]
+  (when-let [id (focused-leaf m)]
+    (let [entry (some #(when (= id (:id %)) %) (vals @(:cache m)))]
+      (when-let [on-key (and (= :input (:tag entry)) (get-in entry [:props :on-key]))]
+        (let [v (str (f/get-content id))
+              cur (byte->char v (f/get-cursor-position id))]
+          (when-let [r (on-key e {:value v :cursor cur})]
+            (let [nv (str (get r :value v))
+                  nc (max 0 (min (count nv) (get r :cursor (count nv))))]
+              (when (not= nv v)
+                (f/set-content id nv))
+              (f/set-cursor-position id (char->byte nv nc))
+              (when (not= nv v)
+                (when-let [h (get-in @handlers [id :on-change :fn])] (h nv)))
+              true)))))))
+
 ;; --- callbacks from the C side --------------------------------------------------
 (defn- on-render [id]
   (if-let [m (@owners id)]
@@ -423,9 +456,13 @@
            :cache (atom {})
            :subtrees (atom {})
            :error (atom nil)}]
-    (f/node-new root-id (if (:on-event opts) 1 0))
+    ;; The root always sees events first: the app's :on-event, then the
+    ;; focused input's :on-key.
+    (f/node-new root-id 1)
     (swap! owners assoc root-id m)
-    (when-let [h (:on-event opts)] (swap! handlers assoc root-id {:on-event h}))
+    (swap! handlers assoc root-id
+           {:on-event (let [h (:on-event opts)]
+                        (fn [e] (or (when h (h e)) (input-key m e))))})
     (try
       (prepare-frame! m)
       m

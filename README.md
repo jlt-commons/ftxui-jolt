@@ -180,7 +180,7 @@ colors the text but not the border. Nest explicit tags for a different order:
 | tag | props | events |
 |---|---|---|
 | `:button` | `:label` (or a string child), `:style :simple/:ascii/:border/:animated` | `:on-click` |
-| `:input` | `:value`, `:placeholder`, `:password`, `:multiline`, `:wrap` (soft-wrap long lines at the width given; the box is as tall as its rows, and focus shows as the cursor rather than reverse video) | `:on-change` (text), `:on-enter` (text) |
+| `:input` | `:value`, `:placeholder`, `:password`, `:multiline`, `:wrap` (soft-wrap long lines at the width given; the box is as tall as its rows, and focus shows as the cursor rather than reverse video) | `:on-change` (text), `:on-enter` (text), `:on-key` (see below) |
 | `:checkbox` | `:label`, `:checked` | `:on-change` (boolean) |
 | `:menu` | `:entries`, `:selected`, `:direction :down/:up/:left/:right`, `:style :plain/:animated/:toggle` | `:on-change` (index), `:on-enter` (index) |
 | `:toggle` | `:entries`, `:selected` | as menu |
@@ -197,6 +197,21 @@ colors the text but not the border. Nest explicit tags for a different order:
 | `:catch-event` | `:on-event`; the children it guards | `:on-event` (event map) |
 
 Any widget also takes `:autofocus true` to start with the focus, and `:key`.
+
+An `:input`'s `:on-key` gives it editing keys of its own. It sees each key
+before the input does, as `(on-key event {:value text :cursor n})` with the
+cursor counted in characters, and answers `nil` to leave the key to the input
+or `{:value :cursor}` (either may be left out) to put that text and cursor in
+the box; a new value goes to `:on-change`.
+
+```clojure
+[:input {:value @text :on-change #(reset! text %)
+         :on-key (fn [e {:keys [value cursor]}]
+                   (case (or (:key e) (:input e))
+                     :ctrl-a {:cursor 0}
+                     :ctrl-k {:value (subs value 0 cursor)}
+                     nil))}]
+```
 
 **Floating windows.** A `:floating-window` is dragged by its inside and
 resized by its edges (`:resize false`, or a map of `:left :right :top :down`,
@@ -275,6 +290,7 @@ FTXUI widgets:
   (ui/render-text s 30 5)          ; the next frame, as text
   (ui/send-key! s :return)         ; deliver a key; then prepare the next frame
   (ui/send-char! s "abc")
+  (ui/send-input! s "\u001b[1;3D") ; the bytes a terminal sends for a key
   (ui/send-mouse! s {:button :left :motion :pressed :x 2 :y 1})
   (ui/refresh! s)                  ; sync state changed outside a handler
   (ui/stats s))                    ; {:components 3 :containers 1 ...}

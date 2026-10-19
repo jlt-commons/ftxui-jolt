@@ -864,7 +864,7 @@ void fj_set_callbacks(fj_render_fn render, fj_action_fn action, fj_event_fn even
   g_event = event;
 }
 
-const char* fj_version(void) { return "ftxui-jolt 0.4.1"; }
+const char* fj_version(void) { return "ftxui-jolt 0.5.0"; }
 
 // --- elements ---------------------------------------------------------------
 int32_t fj_text(const char* s) { return push(text(std::string(s ? s : ""))); }
@@ -1576,6 +1576,12 @@ int32_t fj_send_char(int32_t id, const char* utf8) {
   Component c = comp(id);
   if (!c) return 0;
   return c->OnEvent(char_event(utf8)) ? 1 : 0;
+}
+
+int32_t fj_send_input(int32_t id, const char* bytes) {
+  Component c = comp(id);
+  if (!c) return 0;
+  return c->OnEvent(Event::Special(std::string(bytes ? bytes : ""))) ? 1 : 0;
 }
 
 int32_t fj_send_mouse(int32_t id, int32_t button, int32_t motion, int32_t x, int32_t y) {
