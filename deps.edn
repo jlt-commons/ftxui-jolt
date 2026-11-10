@@ -17,10 +17,14 @@
  ;; application's binary carries the TUI rather than loading the shared object
  ;; from the gitlibs path it was built against. The archive is C++, so the
  ;; C++ runtime is linked in with it.
+ ;;
+ ;; :build names the task that produces the library, so a consumer pulling
+ ;; ftxui-jolt as a git dep gets it built in the checkout on first use.
  :jolt/native [{:name "ftxui-jolt"
                 :darwin ["native/libftxui_jolt.dylib"]
                 :linux  ["native/libftxui_jolt.so"]
-                :static {:archive "native/libftxui_jolt.a"}}
+                :static {:archive "native/libftxui_jolt.a"}
+                :build "native"}
                {:name "ftxui-jolt-cxx"
                 :darwin ["libc++.1.dylib"]
                 :linux  ["libstdc++.so.6"]

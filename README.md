@@ -20,6 +20,7 @@ input editing and event loop underneath.
        [:hbox
         [:button {:label "-1" :on-click #(swap! n dec)}]
         [:button {:label "+1" :on-click #(swap! n inc)}]
+        [:button {:label "reset" :on-click #(reset! n 0)}]
         [:button {:label "quit" :on-click ui/exit!}]]])))
 
 (defn -main [& _] (ui/run counter :mode :fit-component))
@@ -58,6 +59,20 @@ changes — so this library needs no reactive cells and no reconciler of its own
 Nothing here depends on [glimmer](https://github.com/jolt-lang/glimmer); this
 is the same reagent shape over FTXUI's reactivity rather than glimmer's.
 
+## Install
+
+Add ftxui-jolt as a git dep:
+
+```clojure
+{:deps {io.github.jlt-commons/ftxui-jolt {:git/url "https://github.com/jlt-commons/ftxui-jolt"
+                                          :git/sha "..."}}}
+```
+
+The first run builds the native library in the dependency's checkout (needs
+jolt 0.8.26+ for `:build` in `:jolt/native`, plus cmake and a C++17 compiler,
+below). With an older jolt, run `jolt native` in a clone and depend on it with
+`:local/root`.
+
 ## Requirements
 
 FTXUI is C++, so the FFI binds a small C shim (`native/ftxui_jolt.cpp`) with
@@ -65,7 +80,7 @@ FTXUI linked into it statically. Building it needs **cmake** (3.14+) and a
 **C++17 compiler**; nothing else is required at runtime.
 
 ```sh
-jolt native      # builds native/libftxui_jolt.{dylib,so}; re-run after editing the shim
+jolt native      # builds native/libftxui_jolt.{dylib,so}; skipped when up to date
 ```
 
 FTXUI itself is fetched from GitHub at a pinned commit and built as part of
