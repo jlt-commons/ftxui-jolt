@@ -14,6 +14,7 @@
     three function pointers registered with set-callbacks; ftxui.render
     creates them as :collect-safe foreign-callables, because the loop runs
     inside the :blocking app-loop call."
+  (:refer-clojure :exclude [empty])
   (:require [jolt.ffi :as ffi]))
 
 (ffi/defcfn version "fj_version" [] :string)
